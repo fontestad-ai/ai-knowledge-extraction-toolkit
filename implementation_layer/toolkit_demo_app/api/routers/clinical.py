@@ -154,7 +154,10 @@ async def extract_clinical_guideline(
     """Extract traceable clinical knowledge from an uploaded guideline file."""
     if parser_choice not in SUPPORTED_PARSER_CHOICES:
         allowed = ", ".join(sorted(SUPPORTED_PARSER_CHOICES))
-        raise HTTPException(status_code=400, detail=f"Unsupported parser choice. Allowed: {allowed}")
+        raise HTTPException(
+            status_code=400,
+            detail=f"Unsupported parser choice. Allowed: {allowed}",
+        )
 
     suffix = _ensure_supported_file(file.filename)
     content = await validate_file_size(file)

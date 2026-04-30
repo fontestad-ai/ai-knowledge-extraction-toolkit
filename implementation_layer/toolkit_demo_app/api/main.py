@@ -63,7 +63,10 @@ async def root():
         "version": gaik_version,
         "docs": "/docs",
         "endpoints": {
-            "clinical": "/clinical/extract - Extract traceable clinical knowledge from uploaded guideline files",
+            "clinical": (
+                "/clinical/extract - Extract traceable clinical knowledge "
+                "from uploaded guideline files"
+            ),
             "examples": "/clinical/examples - List bundled guideline example assets",
         },
     }

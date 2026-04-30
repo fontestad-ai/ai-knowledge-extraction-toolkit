@@ -1,22 +1,6 @@
 import { Toaster } from "@/components/ui/toaster";
 import type { Metadata } from "next";
-import { Fraunces, JetBrains_Mono, Sora } from "next/font/google";
 import "./globals.css";
-
-const sora = Sora({
-  variable: "--font-sans",
-  subsets: ["latin"],
-});
-
-const fraunces = Fraunces({
-  variable: "--font-serif",
-  subsets: ["latin"],
-});
-
-const jetBrainsMono = JetBrains_Mono({
-  variable: "--font-mono",
-  subsets: ["latin"],
-});
 
 export const metadata: Metadata = {
   title: {
@@ -62,9 +46,7 @@ export default function RootLayout({
 }>) {
   return (
     <html lang="en">
-      <body
-        className={`${sora.variable} ${fraunces.variable} ${jetBrainsMono.variable} antialiased`}
-      >
+      <body className="antialiased">
         {children}
         <Toaster />
       </body>
