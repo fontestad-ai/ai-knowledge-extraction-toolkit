@@ -77,7 +77,10 @@ def test_clinical_consensus_rejects_wrong_or_traceability_gaps():
     )
 
     assert result.accepted is False
-    assert any("unsupported or incorrect clinical content" in reason for reason in result.rejection_reasons)
+    assert any(
+        "unsupported or incorrect clinical content" in reason
+        for reason in result.rejection_reasons
+    )
     assert any("traceability" in reason for reason in result.rejection_reasons)
 
 
