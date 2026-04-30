@@ -53,22 +53,26 @@ interface ClinicalExampleAsset {
 }
 
 interface ClinicalExtractResult {
+  run_id: string;
   source_file: string;
   parser_choice: string;
+  extraction_backend: string;
   route: Record<string, unknown> | null;
   parsed_documents: string[];
   extracted_knowledge: Record<string, unknown>[];
   operationalized_knowledge: Record<string, unknown> | null;
   validation: Record<string, unknown> | null;
+  quality_report: Record<string, unknown> | null;
+  persistence: Record<string, unknown>;
 }
 
 const PARSER_OPTIONS = [
   { value: "auto", label: "Auto" },
+  { value: "pdf_text", label: "Local PDF text" },
+  { value: "pptx_text", label: "Local PowerPoint text" },
+  { value: "local_image", label: "Local image artifact registry" },
   { value: "pymupdf", label: "PyMuPDF" },
   { value: "docling", label: "Docling" },
-  { value: "multimodal", label: "Multimodal" },
-  { value: "vision_parser", label: "Vision Parser" },
-  { value: "vision_plus", label: "Vision Plus" },
   { value: "docx", label: "DOCX" },
 ] as const;
 
@@ -219,9 +223,10 @@ export function ClinicalWorkbench() {
             Clinical Knowledge Extraction
           </h1>
           <p className="text-muted-foreground max-w-3xl text-base sm:text-lg">
-            Upload a guideline PDF or page image, extract source-grounded
-            hypertension knowledge, and review the structured output that can
-            feed downstream records, retrieval, and knowledge-graph workflows.
+            Upload a guideline PDF, PowerPoint, Word file, or page image,
+            extract source-grounded clinical knowledge through LMCLI-first local
+            extraction, persist the run in SQLite, and review artifacts for
+            downstream records, retrieval, and graph workflows.
           </p>
         </div>
       </section>
@@ -231,7 +236,8 @@ export function ClinicalWorkbench() {
           <CardTitle>Runtime dependency surface</CardTitle>
           <CardDescription>
             External services removed from the frontend shell and the remaining
-            dependency still used by the clinical extraction path.
+            dependency posture after moving the active clinical extraction path
+            away from OpenAI/Azure calls.
           </CardDescription>
         </CardHeader>
         <CardContent className="grid gap-4 md:grid-cols-3">
@@ -246,16 +252,17 @@ export function ClinicalWorkbench() {
           <div className="space-y-2">
             <h2 className="font-medium">Local-first target</h2>
             <ul className="text-muted-foreground list-disc space-y-1 pl-5 text-sm">
-              <li>SQLite for any future local persistence</li>
-              <li>sqlite-vec / SQLite vector extension if retrieval storage is added</li>
+              <li>SQLite stores extraction runs and operationalized clinical units</li>
+              <li>RAG rows are sqlite-vec-ready with local embedding slots</li>
               <li>No active auth database in this branch</li>
             </ul>
           </div>
           <div className="space-y-2">
             <h2 className="font-medium">Still external today</h2>
             <ul className="text-muted-foreground list-disc space-y-1 pl-5 text-sm">
-              <li>GAIK extraction still calls Azure OpenAI or OpenAI through the current clinical pipeline</li>
-              <li>This should be the next replacement target if you want LMCLI-only interactions</li>
+              <li>Active clinical extraction uses LMCLI when configured</li>
+              <li>When LMCLI is absent, a conservative local deterministic extractor runs</li>
+              <li>OpenAI/Azure remain in broader toolkit dependencies but are not called by this path</li>
             </ul>
           </div>
         </CardContent>
@@ -474,11 +481,21 @@ export function ClinicalWorkbench() {
 
               <ResultCard
                 title="Extracted clinical knowledge"
-                description={`Source file: ${result.source_file} · Parser: ${result.parser_choice}`}
+                description={`Run: ${result.run_id} · Source: ${result.source_file} · Parser: ${result.parser_choice} · Backend: ${result.extraction_backend}`}
                 copyContent={JSON.stringify(result.extracted_knowledge, null, 2)}
               >
                 <ResultJson data={result.extracted_knowledge} maxHeight="360px" />
               </ResultCard>
+
+              {result.quality_report && (
+                <ResultCard
+                  title="Quality control report"
+                  description="Acceptance status, issues, and mitigations applied during local extraction."
+                  copyContent={JSON.stringify(result.quality_report, null, 2)}
+                >
+                  <ResultJson data={result.quality_report} maxHeight="280px" />
+                </ResultCard>
+              )}
 
               {result.operationalized_knowledge && (
                 <ResultCard

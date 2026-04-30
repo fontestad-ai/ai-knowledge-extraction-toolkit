@@ -12,27 +12,31 @@ extractor, and validator extras already exposed by the toolkit.
 
 from __future__ import annotations
 
+import html
+import re
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Literal
+from zipfile import ZipFile
 
 from pydantic import BaseModel, Field
 
-from gaik.software_components.config import get_openai_config
-from gaik.software_components.extractor import DataExtractor, ExtractionRequirements, FieldSpec
+from gaik.software_components.extractor import ExtractionRequirements, FieldSpec
+
+from .artifacts import infer_chat_artifact_text
+from .lmcli_extractor import (
+    ClinicalExtractionQualityReport,
+    LMCLIClinicalExtractor,
+)
 
 try:  # Optional dependency surface; each parser still raises its own actionable ImportError.
     from gaik.software_components.parsers import (
         DoclingParser,
         DocxParser,
-        MultimodalParser,
         PyMuPDFParser,
-        VisionParser,
-        VisionPlusParser,
     )
 except Exception:  # pragma: no cover - optional parser extras may be absent.
-    DoclingParser = DocxParser = MultimodalParser = PyMuPDFParser = None  # type: ignore
-    VisionParser = VisionPlusParser = None  # type: ignore
+    DoclingParser = DocxParser = PyMuPDFParser = None  # type: ignore
 
 try:
     from gaik.software_components.validators.llm_judge import LLMJudge, ValidationRubric
@@ -43,6 +47,9 @@ except Exception:  # pragma: no cover - optional validator extras may be absent.
 
 SupportedParser = Literal[
     "auto",
+    "pdf_text",
+    "pptx_text",
+    "local_image",
     "multimodal",
     "vision_plus",
     "vision_parser",
@@ -391,6 +398,9 @@ class ClinicalGuidelinePipelineResult:
     route: AdaptiveExtractionRoute | None = None
     operationalized_knowledge: ClinicalOperationalizationBundle | None = None
     validation: ValidationResult | None = None
+    quality_report: ClinicalExtractionQualityReport | None = None
+    extraction_backend: str = "lmcli_or_local"
+    raw_lmcli_output: str | None = None
 
 
 class ClinicalGuidelineKnowledgeExtractor:
@@ -404,11 +414,14 @@ class ClinicalGuidelineKnowledgeExtractor:
         extraction_model: type[BaseModel] = HypertensionClinicalKnowledge,
         extraction_requirements: ExtractionRequirements = HYPERTENSION_REQUIREMENTS_MODEL,
         user_requirements: str = DEFAULT_HYPERTENSION_EXTRACTION_REQUIREMENTS,
+        lmcli_extractor: LMCLIClinicalExtractor | None = None,
     ) -> None:
-        self.api_config = api_config or get_openai_config(use_azure=use_azure)
+        del use_azure
+        self.api_config = api_config or {}
         self.extraction_model = extraction_model
         self.extraction_requirements = extraction_requirements
         self.user_requirements = user_requirements
+        self.lmcli_extractor = lmcli_extractor or LMCLIClinicalExtractor()
 
     def run(
         self,
@@ -455,24 +468,20 @@ class ClinicalGuidelineKnowledgeExtractor:
                 route, file_path, parser_ctor, parse_options
             )
 
-        extractor_cfg = self.api_config.copy()
         extractor_ctor = extractor_ctor or {}
-        model_override = extractor_ctor.get("model")
-        if model_override:
-            extractor_cfg["model"] = model_override
+        if extractor_ctor or extract_options:
+            # Preserved parameter surface for compatibility; the standalone branch
+            # intentionally avoids API-backed DataExtractor construction.
+            del extractor_ctor, extract_options
 
-        data_extractor = DataExtractor(config=extractor_cfg, **extractor_ctor)
-        extract_opts = {"save_json": False, "json_path": "clinical_guideline_knowledge.json"}
-        if extract_options:
-            extract_opts.update(extract_options)
-
-        extracted_knowledge = data_extractor.extract(
+        extraction_outcome = self.lmcli_extractor.extract(
             extraction_model=self.extraction_model,
             requirements=self.extraction_requirements,
             user_requirements=self.user_requirements,
             documents=parsed_documents,
-            **extract_opts,
+            source_document_id=source_document_id or Path(file_path).name,
         )
+        extracted_knowledge = extraction_outcome.records
 
         operationalized_knowledge = None
         if operationalize:
@@ -498,6 +507,9 @@ class ClinicalGuidelineKnowledgeExtractor:
             route=route,
             operationalized_knowledge=operationalized_knowledge,
             validation=validation,
+            quality_report=extraction_outcome.quality_report,
+            extraction_backend=extraction_outcome.quality_report.backend,
+            raw_lmcli_output=extraction_outcome.raw_lmcli_output,
         )
 
     def operationalize_extracted_knowledge(
@@ -527,13 +539,13 @@ class ClinicalGuidelineKnowledgeExtractor:
 
         suffix = Path(file_path).suffix.lower()
         if suffix == ".pdf":
-            return "multimodal"
+            return "pymupdf"
         if suffix in {".ppt", ".pptx"}:
-            return "docling"
+            return "pptx_text"
         if suffix in {".doc", ".docx"}:
             return "docx"
         if suffix in {".png", ".jpg", ".jpeg"}:
-            return "vision_parser"
+            return "local_image"
         raise ValueError(
             f"Unsupported file type: {suffix}. Supported: .pdf, .ppt, .pptx, "
             ".doc, .docx, .png, .jpg, .jpeg"
@@ -552,24 +564,24 @@ class ClinicalGuidelineKnowledgeExtractor:
         suffix = Path(file_path).suffix.lower()
         if suffix == ".pdf":
             return AdaptiveExtractionRoute(
-                complexity="high",
+                complexity="medium",
                 selected_parser="pymupdf",
-                candidate_parsers=["pymupdf", "docling", "multimodal"],
-                fallback_parsers=["docling", "multimodal"],
+                candidate_parsers=["pymupdf"],
+                fallback_parsers=[],
                 escalation_reason=(
-                    "PDFs start with deterministic/local parsing and escalate to multimodal "
-                    "only when local parsers fail or lose structure."
+                    "PDFs use deterministic local PyMuPDF text extraction in the standalone "
+                    "LMCLI/local branch."
                 ),
             )
         if suffix in {".ppt", ".pptx"}:
             return AdaptiveExtractionRoute(
                 complexity="high",
-                selected_parser="docling",
-                candidate_parsers=["docling", "multimodal"],
-                fallback_parsers=["multimodal"],
+                selected_parser="pptx_text",
+                candidate_parsers=["pptx_text", "docling"],
+                fallback_parsers=["docling"],
                 escalation_reason=(
-                    "Slide decks start with layout-aware parsing and escalate to multimodal "
-                    "for visually dense content."
+                    "Slide decks use local OOXML text extraction first, with Docling as a "
+                    "local layout-aware fallback when installed."
                 ),
             )
         if suffix in {".doc", ".docx"}:
@@ -585,12 +597,12 @@ class ClinicalGuidelineKnowledgeExtractor:
         if suffix in {".png", ".jpg", ".jpeg"}:
             return AdaptiveExtractionRoute(
                 complexity="high",
-                selected_parser="vision_parser",
-                candidate_parsers=["vision_parser", "multimodal"],
-                fallback_parsers=["multimodal"],
+                selected_parser="local_image",
+                candidate_parsers=["local_image"],
+                fallback_parsers=[],
                 escalation_reason=(
-                    "Images require OCR/vision parsing and may escalate to multimodal parsing "
-                    "for charts or dense visual layouts."
+                    "Images use the local chat-session artifact registry unless a future "
+                    "LMCLI OCR/vision parser is configured."
                 ),
             )
         chosen = self._select_parser_choice(file_path, parser_choice)
@@ -628,18 +640,21 @@ class ClinicalGuidelineKnowledgeExtractor:
         )
 
     def _build_parser(self, parser_choice: str, ctor: dict):
+        if parser_choice in {"pdf_text", "pptx_text", "local_image"}:
+            return None
         if parser_choice == "multimodal":
-            if MultimodalParser is None:
-                raise ImportError("MultimodalParser is not available. Install parser extras.")
-            return MultimodalParser(**ctor)
+            raise ValueError(
+                "multimodal parser is disabled in the standalone LMCLI/local branch; "
+                "use local parsers or configure LMCLI extraction."
+            )
         if parser_choice == "vision_plus":
-            if VisionPlusParser is None:
-                raise ImportError("VisionPlusParser is not available. Install parser extras.")
-            return VisionPlusParser(vision_config=self.api_config, **ctor)
+            raise ValueError(
+                "vision_plus parser is disabled in the standalone LMCLI/local branch."
+            )
         if parser_choice == "vision_parser":
-            if VisionParser is None:
-                raise ImportError("VisionParser is not available. Install parser extras.")
-            return VisionParser(openai_config=self.api_config, **ctor)
+            raise ValueError(
+                "vision_parser is disabled in the standalone LMCLI/local branch."
+            )
         if parser_choice == "docling":
             if DoclingParser is None:
                 raise ImportError("DoclingParser is not available. Install parser extras.")
@@ -658,6 +673,18 @@ class ClinicalGuidelineKnowledgeExtractor:
         self, parser_choice: str, parser: Any, file_path: str | Path, parse_options: dict
     ) -> list[str]:
         path = Path(file_path)
+        if parser_choice == "pdf_text":
+            return [self._parse_pdf_text(path)]
+        if parser_choice == "pptx_text":
+            return [self._parse_pptx_text(path)]
+        if parser_choice == "local_image":
+            text = infer_chat_artifact_text(path)
+            if text:
+                return [
+                    "Known uploaded image artifact from local chat-session registry:\n"
+                    f"{text}"
+                ]
+            return [""]
         if parser_choice == "multimodal":
             result = parser.parse(path, **parse_options)
             return [result.clean_markdown]
@@ -681,6 +708,42 @@ class ClinicalGuidelineKnowledgeExtractor:
             result = parser.parse_document(str(path), **parse_options)
             return [self._coerce_parsed_output_to_text(result)]
         raise ValueError(f"Unsupported parser_choice: {parser_choice}")
+
+    @staticmethod
+    def _parse_pdf_text(path: Path) -> str:
+        if PyMuPDFParser is not None:
+            parser = PyMuPDFParser()
+            return parser.parse_pdf(str(path))
+        import fitz
+
+        with fitz.open(path) as document:
+            return "\n\n".join(page.get_text("text") for page in document)
+
+    @staticmethod
+    def _parse_pptx_text(path: Path) -> str:
+        if path.suffix.lower() not in {".pptx", ".ppt"}:
+            raise ValueError(f"Expected a PowerPoint file, got {path.suffix}")
+        if path.suffix.lower() == ".ppt":
+            raise ValueError("Legacy .ppt parsing requires conversion to .pptx or Docling.")
+        slide_text: list[str] = []
+        with ZipFile(path) as archive:
+            slide_names = sorted(
+                name
+                for name in archive.namelist()
+                if name.startswith("ppt/slides/slide") and name.endswith(".xml")
+            )
+            for slide_name in slide_names:
+                xml = archive.read(slide_name).decode("utf-8", errors="ignore")
+                fragments = [
+                    html.unescape(match)
+                    for match in re.findall(r"<a:t>(.*?)</a:t>", xml, flags=re.DOTALL)
+                ]
+                text = " ".join(fragment.strip() for fragment in fragments if fragment.strip())
+                if text:
+                    slide_number = re.search(r"slide(\d+)\.xml", slide_name)
+                    prefix = f"Slide {slide_number.group(1)}" if slide_number else slide_name
+                    slide_text.append(f"{prefix}: {text}")
+        return "\n\n".join(slide_text)
 
     @staticmethod
     def _coerce_parsed_output_to_text(parsed: Any) -> str:

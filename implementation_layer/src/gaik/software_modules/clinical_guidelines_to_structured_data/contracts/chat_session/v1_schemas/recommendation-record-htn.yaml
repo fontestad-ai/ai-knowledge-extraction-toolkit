@@ -1,0 +1,1396 @@
+# =============================================================================
+# recommendation-record-htn.yaml
+# -----------------------------------------------------------------------------
+# Canonical schema for atomic clinical recommendation records produced by the
+# `cpg-htn-2025-acc-aha` framework.
+#
+# This schema is the output target of the Gate 1 skill
+# `extract-recommendation-cor-loe` and the input to all downstream skills:
+# `bind-htn-vocab`, `pico-decompose-htn`, `extract-bp-thresholds`,
+# `extract-pharm-rules`, `emit-fhir-plandefinition-htn`, `emit-cql-htn`, etc.
+#
+# Posture: caution over velocity, fidelity over coverage, verbatim over
+# paraphrase. Every clinical field is fail-closed. Every claim is anchored to
+# (pdf_sha256, page, bbox, char_spans). No record advances without
+# triple-modal extractor consensus and two independent SME signatures.
+#
+# Authority:
+#   - ADR-HTN-001 D2, D3, D4, D5, D8, D9, D10, D11, D12, D13, D14, D15
+#   - Parse + Extraction Phase Spec §4 (full)
+#   - Parent framework rules: `god-session`, `human-authorization`,
+#     `native-ux-tools`
+#
+# Relationship to neighboring schemas (separate files, referenced by $ref):
+#   - schemas/sair.yaml
+#   - schemas/acc-aha-grading.yaml
+#   - schemas/atomic-unit.yaml
+#   - schemas/gate1-register.yaml
+#   - schemas/terminology-binding-htn.yaml
+#   - schemas/pico-htn.yaml
+#   - schemas/cpg-fhir-mapping-htn.yaml
+#   - schemas/guideline-manifest-hbp-2025.yaml
+# =============================================================================
+
+$schema: "https://json-schema.org/draft/2020-12/schema"
+$id: "https://aiwg.io/cpg-htn-2025-acc-aha/schemas/recommendation-record-htn.yaml"
+title: "RecommendationRecordHTN"
+description: >
+  A single, atomic, source-anchored, SME-attested clinical recommendation
+  derived from the 2025 ACC/AHA High Blood Pressure Guideline. The schema is
+  the contract between Gate 1 and every downstream phase of the pipeline.
+version: "1.0.0"
+schema_lifecycle: stable
+last_reviewed: "HUMAN_FILL: ISO-8601 date of most recent panel review of this schema"
+authority:
+  adr: ADR-HTN-001
+  framework: cpg-htn-2025-acc-aha
+  parent_framework: aiwg-training
+license: MIT
+
+# -----------------------------------------------------------------------------
+# 1. CLOSED ENUMERATIONS
+# -----------------------------------------------------------------------------
+# Every enum below is a closed set. No value outside the enum may be persisted.
+# Schema validators MUST reject unknown values; downstream skills MUST refuse
+# to operate on records carrying unknown values. Auto-correction is forbidden.
+# -----------------------------------------------------------------------------
+
+$defs:
+
+  # ---------------------------------------------------------------------------
+  # 1.1 ACC/AHA grading enums (verbatim from source; never paraphrased)
+  # ---------------------------------------------------------------------------
+  AccAhaCOR:
+    type: string
+    enum:
+      - "I"
+      - "IIa"
+      - "IIb"
+      - "III: No Benefit"
+      - "III: Harm"
+    description: >
+      ACC/AHA Class of Recommendation. Values are exact verbatim labels as they
+      appear in source recommendation boxes after NFC normalization and
+      whitespace collapse. Pluralizations, casefolds, or numeric variants
+      ("IIA", "2a", "Class IIa") are enum violations.
+
+  AccAhaLOE:
+    type: string
+    enum:
+      - "A"
+      - "B-R"
+      - "B-NR"
+      - "C-LD"
+      - "C-EO"
+    description: >
+      ACC/AHA Level of Evidence. Closed set; verbatim only.
+
+  # ---------------------------------------------------------------------------
+  # 1.2 Population enum (HTN-typed)
+  # ---------------------------------------------------------------------------
+  HtnPopulation:
+    type: string
+    enum:
+      - general-adult
+      - older-adult-ge65
+      - older-adult-ge75
+      - pregnant
+      - postpartum
+      - ckd-G1-A1
+      - ckd-G1-A2
+      - ckd-G1-A3
+      - ckd-G2-A1
+      - ckd-G2-A2
+      - ckd-G2-A3
+      - ckd-G3a-A1
+      - ckd-G3a-A2
+      - ckd-G3a-A3
+      - ckd-G3b-A1
+      - ckd-G3b-A2
+      - ckd-G3b-A3
+      - ckd-G4
+      - ckd-G5
+      - t2d
+      - t1d
+      - post-stroke
+      - hfref
+      - hfpef
+      - hfmref
+      - cad
+      - black-adult
+      - resistant-htn
+      - secondary-htn-suspected
+      - urgency
+      - emergency
+    description: >
+      Closed set of HTN-relevant populations. Multi-population recommendations
+      produce one record per population. Anything not in this enum escalates to
+      the panel and never silently advances.
+
+  # ---------------------------------------------------------------------------
+  # 1.3 Drug-class enum (RxNorm ingredient-class aligned)
+  # ---------------------------------------------------------------------------
+  DrugClass:
+    type: string
+    enum:
+      - thiazide-or-thiazide-like
+      - ace-inhibitor
+      - arb
+      - dihydropyridine-ccb
+      - non-dihydropyridine-ccb
+      - mra
+      - beta-blocker-cardioselective
+      - beta-blocker-non-selective
+      - alpha-blocker
+      - central-alpha2-agonist
+      - direct-renin-inhibitor
+      - arni
+      - loop-diuretic
+      - potassium-sparing-diuretic
+      - hydralazine
+      - nitrate
+      - methyldopa
+      - labetalol
+      - nifedipine-er
+    description: >
+      Computable drug-rule fields use only ingredient-class identifiers from
+      this enum. Brand names are never persisted in computable fields; they may
+      appear only in the audit-only `mentions[]` array on a DrugRule.
+
+  # ---------------------------------------------------------------------------
+  # 1.4 BP measurement and threshold enums
+  # ---------------------------------------------------------------------------
+  BPComponent:
+    type: string
+    enum: [SBP, DBP, MAP, SBP/DBP]
+
+  ThresholdOperator:
+    type: string
+    enum: [ge, le, gt, lt, range, eq]
+
+  MeasurementContext:
+    type: string
+    enum:
+      - in-office
+      - aobp
+      - hbpm
+      - abpm-daytime
+      - abpm-nighttime
+      - abpm-24h
+      - unspecified
+
+  # ---------------------------------------------------------------------------
+  # 1.5 Comparator and outcome enums (PICO completeness)
+  # ---------------------------------------------------------------------------
+  ComparatorKind:
+    type: string
+    enum: [none-stated, placebo, active-comparator, lifestyle, no-treatment, usual-care]
+
+  OutcomeKind:
+    type: string
+    enum: [stated, implicit-by-source]
+
+  # ---------------------------------------------------------------------------
+  # 1.6 Atomic-unit enums
+  # ---------------------------------------------------------------------------
+  AtomicUnitKind:
+    type: string
+    enum:
+      - atomic-recommendation
+      - qualifier
+      - exclusion
+      - monitoring
+      - citation
+
+  AtomicityState:
+    type: string
+    enum: [agreed, held, conflict]
+
+  # ---------------------------------------------------------------------------
+  # 1.7 Provenance and consensus enums
+  # ---------------------------------------------------------------------------
+  ConsensusState:
+    type: string
+    enum:
+      - triple-consensus
+      - escalated-and-resolved
+      - gate-1-pending
+      - gate-1-passed
+      - gate-1-rework
+      - withdrawn
+
+  PredecessorRelation:
+    type: string
+    enum: [unchanged, revised, new, removed, undetermined]
+
+  RiskEngine:
+    type: string
+    enum: [PREVENT, PCE-legacy]
+    description: >
+      PREVENT is canonical per ADR-HTN-001 D5. PCE-legacy is recorded only when
+      the source explicitly references it; never feeds CQL or CDS Hooks.
+
+  # ---------------------------------------------------------------------------
+  # 1.8 Reviewer-role and decision enums
+  # ---------------------------------------------------------------------------
+  ReviewerRole:
+    type: string
+    enum:
+      - hypertension-specialist
+      - clinical-pharmacologist
+      - mfm-or-obstetric-medicine
+      - geriatrician
+      - primary-care-clinician
+      - clinical-informaticist
+      - nephrology
+      - endocrinology
+      - emergency-medicine
+      - critical-care
+      - panel-chair
+      - medical-director
+
+  ReviewerDecision:
+    type: string
+    enum:
+      - accept
+      - accept-with-edit
+      - reject-rework
+      - escalate-panel
+
+  HardBlockBasis:
+    type: string
+    enum:
+      - cor-iii-harm
+      - cor-iii-no-benefit
+      - explicit-should-not
+      - explicit-not-recommended
+    description: >
+      A hard-block (e.g., RAAS inhibitors in pregnancy) requires an explicit
+      anchor in source. The basis enum records *which* anchor justifies the
+      hard-block. The pipeline never invents a hard-block.
+
+# -----------------------------------------------------------------------------
+# 2. STRUCTURED TYPES (referenced by the root type)
+# -----------------------------------------------------------------------------
+
+  # ---------------------------------------------------------------------------
+  # 2.1 Anchor — the ground truth for every claim
+  # ---------------------------------------------------------------------------
+  Anchor:
+    type: object
+    additionalProperties: false
+    required: [pdf_sha256, sair_sha256, page, bbox, char_spans]
+    properties:
+      pdf_sha256:
+        type: string
+        pattern: "^[0-9a-f]{64}$"
+        description: SHA-256 of the conditioned source PDF (post Phase 2.0.3).
+      sair_sha256:
+        type: string
+        pattern: "^[0-9a-f]{64}$"
+        description: SHA-256 of the SAIR document at the moment of extraction.
+      page:
+        type: integer
+        minimum: 1
+      bbox:
+        type: array
+        minItems: 4
+        maxItems: 4
+        items: { type: number }
+        description: "[x0, y0, x1, y1] in PDF user-space units."
+      char_spans:
+        type: array
+        minItems: 1
+        items:
+          type: array
+          minItems: 2
+          maxItems: 2
+          items: { type: integer, minimum: 0 }
+          description: "[start, end] character offsets into text_verbatim."
+      cell_bboxes:
+        type: object
+        additionalProperties: false
+        description: Per-cell bboxes for COR / LOE / Recommendation cells.
+        properties:
+          cor:    { type: array, minItems: 4, maxItems: 4, items: { type: number } }
+          loe:    { type: array, minItems: 4, maxItems: 4, items: { type: number } }
+          recommendation: { type: array, minItems: 4, maxItems: 4, items: { type: number } }
+      reading_order_index: { type: integer, minimum: 0 }
+      section_path:
+        type: array
+        minItems: 1
+        items: { type: string }
+        description: Heading-stack chain at this position in reading order.
+
+  # ---------------------------------------------------------------------------
+  # 2.2 NormalizationLog — every reversible Unicode transform recorded
+  # ---------------------------------------------------------------------------
+  NormalizationLog:
+    type: object
+    additionalProperties: false
+    required: [nfc_applied, transforms]
+    properties:
+      nfc_applied: { type: boolean }
+      transforms:
+        type: array
+        items:
+          type: object
+          additionalProperties: false
+          required: [kind, position, original, replacement]
+          properties:
+            kind:
+              type: string
+              enum:
+                - soft-hyphen-removed
+                - ligature-decomposed
+                - non-breaking-space-normalized
+                - smart-quote-normalized
+                - hyphen-line-break-rejoined
+                - unicode-nfc
+            position: { type: integer, minimum: 0 }
+            original: { type: string }
+            replacement: { type: string }
+
+  # ---------------------------------------------------------------------------
+  # 2.3 AtomicUnit
+  # ---------------------------------------------------------------------------
+  AtomicUnit:
+    type: object
+    additionalProperties: false
+    required: [unit_id, span, kind, inherits_from]
+    properties:
+      unit_id:
+        type: string
+        pattern: "^au-[0-9a-f]{16}$"
+      span:
+        type: array
+        minItems: 2
+        maxItems: 2
+        items: { type: integer, minimum: 0 }
+        description: "[start, end] into parent text_verbatim. Must be a contiguous substring; verified, not trusted."
+      kind: { $ref: "#/$defs/AtomicUnitKind" }
+      inherits_from:
+        type: string
+        description: Parent recommendation_id; explicit, never assumed.
+      llm_proposers:
+        type: array
+        minItems: 2
+        maxItems: 2
+        items:
+          type: object
+          additionalProperties: false
+          required: [model, pin]
+          properties:
+            model: { type: string }
+            pin:   { type: string }
+      jaccard_with_peer:
+        type: number
+        minimum: 0.0
+        maximum: 1.0
+
+  # ---------------------------------------------------------------------------
+  # 2.4 BPThreshold
+  # ---------------------------------------------------------------------------
+  BPThreshold:
+    type: object
+    additionalProperties: false
+    required: [component, operator, low_mmHg, measurement_context, source_span]
+    properties:
+      component: { $ref: "#/$defs/BPComponent" }
+      operator:  { $ref: "#/$defs/ThresholdOperator" }
+      low_mmHg:  { type: integer, minimum: 50, maximum: 260 }
+      high_mmHg: { type: [integer, "null"], minimum: 50, maximum: 260 }
+      measurement_context: { $ref: "#/$defs/MeasurementContext" }
+      source_span:
+        type: array
+        minItems: 2
+        maxItems: 2
+        items: { type: integer, minimum: 0 }
+      ucum_unit:
+        type: string
+        const: "mm[Hg]"
+
+  # ---------------------------------------------------------------------------
+  # 2.5 DrugRule (allowlist / denylist / first-line)
+  # ---------------------------------------------------------------------------
+  DrugRule:
+    type: object
+    additionalProperties: false
+    required: [intent, classes, source_span]
+    properties:
+      intent:
+        type: string
+        enum: [first-line, allowlist, denylist, second-line, alternative]
+      classes:
+        type: array
+        minItems: 1
+        items: { $ref: "#/$defs/DrugClass" }
+      hard_block_basis:
+        $ref: "#/$defs/HardBlockBasis"
+        description: Required when intent == "denylist".
+      mentions:
+        type: array
+        items:
+          type: object
+          additionalProperties: false
+          required: [text, source_span]
+          properties:
+            text: { type: string }
+            note:
+              type: string
+              description: Brand or generic mentioned in source; audit-only, never enters CQL.
+            source_span:
+              type: array
+              minItems: 2
+              maxItems: 2
+              items: { type: integer, minimum: 0 }
+      source_span:
+        type: array
+        minItems: 2
+        maxItems: 2
+        items: { type: integer, minimum: 0 }
+
+  # ---------------------------------------------------------------------------
+  # 2.6 Contraindication
+  # ---------------------------------------------------------------------------
+  Contraindication:
+    type: object
+    additionalProperties: false
+    required: [text_span, basis]
+    properties:
+      text_span:
+        type: array
+        minItems: 2
+        maxItems: 2
+        items: { type: integer, minimum: 0 }
+      basis: { $ref: "#/$defs/HardBlockBasis" }
+      drug_classes:
+        type: array
+        items: { $ref: "#/$defs/DrugClass" }
+      population_scope:
+        type: array
+        items: { $ref: "#/$defs/HtnPopulation" }
+
+  # ---------------------------------------------------------------------------
+  # 2.7 Monitoring
+  # ---------------------------------------------------------------------------
+  Monitoring:
+    type: object
+    additionalProperties: false
+    required: [text_span]
+    properties:
+      text_span:
+        type: array
+        minItems: 2
+        maxItems: 2
+        items: { type: integer, minimum: 0 }
+      cadence_iso8601_duration:
+        type: [string, "null"]
+        pattern: "^P.*$"
+      analyte_loinc_candidates:
+        type: array
+        items: { type: string, pattern: "^[0-9]{1,5}-[0-9]$" }
+        description: LOINC candidates; final binding is performed by `bind-htn-vocab`.
+
+  # ---------------------------------------------------------------------------
+  # 2.8 RiskEngineBinding
+  # ---------------------------------------------------------------------------
+  RiskEngineBinding:
+    type: object
+    additionalProperties: false
+    required: [name, source_span]
+    properties:
+      name: { $ref: "#/$defs/RiskEngine" }
+      threshold_percent:
+        type: [number, "null"]
+        minimum: 0
+        maximum: 100
+      horizon_years:
+        type: [integer, "null"]
+        enum: [10, 30, null]
+      source_span:
+        type: array
+        minItems: 2
+        maxItems: 2
+        items: { type: integer, minimum: 0 }
+      legacy:
+        type: boolean
+        default: false
+        description: True only when name == "PCE-legacy".
+
+  # ---------------------------------------------------------------------------
+  # 2.9 PicoPrecheck (full PICO is in pico-htn.yaml; this is the gate-time stub)
+  # ---------------------------------------------------------------------------
+  PicoPrecheck:
+    type: object
+    additionalProperties: false
+    required: [population_present, intervention_present, populations]
+    properties:
+      population_present:    { type: boolean }
+      intervention_present:  { type: boolean }
+      populations:
+        type: array
+        minItems: 1
+        items: { $ref: "#/$defs/HtnPopulation" }
+      comparator_kind: { $ref: "#/$defs/ComparatorKind" }
+      outcome_kind:    { $ref: "#/$defs/OutcomeKind" }
+
+  # ---------------------------------------------------------------------------
+  # 2.10 Reference
+  # ---------------------------------------------------------------------------
+  Reference:
+    type: object
+    additionalProperties: false
+    required: [ref_id, source_span]
+    properties:
+      ref_id:
+        type: string
+        description: Footnote-resolved citation ID from SAIR (e.g., "fn-12-3").
+      doi:    { type: [string, "null"], pattern: "^10\\..+/.+$" }
+      pmid:   { type: [string, "null"], pattern: "^[0-9]+$" }
+      source_span:
+        type: array
+        minItems: 2
+        maxItems: 2
+        items: { type: integer, minimum: 0 }
+
+  # ---------------------------------------------------------------------------
+  # 2.11 PredecessorMapping (advisory only)
+  # ---------------------------------------------------------------------------
+  PredecessorMapping:
+    type: object
+    additionalProperties: false
+    required: [relation]
+    properties:
+      relation: { $ref: "#/$defs/PredecessorRelation" }
+      predecessor_id: { type: [string, "null"] }
+      rationale_span:
+        type: [array, "null"]
+        minItems: 2
+        maxItems: 2
+        items: { type: integer, minimum: 0 }
+      reviewer_acknowledged:
+        type: boolean
+        description: Must be true at Gate 1 exit; advisory, never gates clinical advance.
+
+  # ---------------------------------------------------------------------------
+  # 2.12 ExtractorEvidence (per-modality)
+  # ---------------------------------------------------------------------------
+  ExtractorEvidence:
+    type: object
+    additionalProperties: false
+    required: [modality, tool, pin]
+    properties:
+      modality:
+        type: string
+        enum: [pdf-text-deterministic, vision-language, ocr-multi-engine]
+      tool:    { type: string }
+      pin:     { type: string }
+      prompt_id:        { type: [string, "null"] }
+      raw_response_sha: { type: [string, "null"], pattern: "^[0-9a-f]{64}$" }
+      confidence_min:   { type: [number, "null"], minimum: 0.0, maximum: 1.0 }
+
+  # ---------------------------------------------------------------------------
+  # 2.13 ConsensusEvidence
+  # ---------------------------------------------------------------------------
+  ConsensusEvidence:
+    type: object
+    additionalProperties: false
+    required: [state, similarity_min_pairwise]
+    properties:
+      state: { $ref: "#/$defs/ConsensusState" }
+      similarity_min_pairwise:
+        type: number
+        minimum: 0.99
+        maximum: 1.0
+        description: Lowest of the three pairwise text similarities (A–V, A–O, V–O).
+      cor_agreement: { type: boolean }
+      loe_agreement: { type: boolean }
+
+  # ---------------------------------------------------------------------------
+  # 2.14 ReviewerSignoff
+  # ---------------------------------------------------------------------------
+  ReviewerSignoff:
+    type: object
+    additionalProperties: false
+    required: [reviewer_id, role, decision, signed_at, signature, content_hash]
+    properties:
+      reviewer_id:
+        type: string
+        description: Stable reviewer identity, with credential evidence indexed by `gate1-register`.
+      role:        { $ref: "#/$defs/ReviewerRole" }
+      decision:    { $ref: "#/$defs/ReviewerDecision" }
+      rationale:   { type: string, minLength: 1 }
+      signed_at:   { type: string, format: date-time }
+      signature:
+        type: string
+        description: Cryptographic signature over `content_hash`. Algorithm pinned in tools_lock.
+      content_hash:
+        type: string
+        pattern: "^[0-9a-f]{64}$"
+        description: SHA-256 over the canonicalized record at signing time.
+      edits:
+        type: array
+        items:
+          type: object
+          additionalProperties: false
+          required: [field, before, after]
+          properties:
+            field:  { type: string, enum: [text_verbatim_typo, supportive_text, monitoring_text, citation_link] }
+            before: { type: string }
+            after:  { type: string }
+        description: >
+          Edits captured as immutable deltas. Edits to acc_aha_cor or
+          acc_aha_loe are forbidden and MUST be reclassified as reject-rework.
+
+  # ---------------------------------------------------------------------------
+  # 2.15 ProvenanceBundle
+  # ---------------------------------------------------------------------------
+  ProvenanceBundle:
+    type: object
+    additionalProperties: false
+    required: [run_id, extractors, consensus, atomicity, reviewer_signoffs, fhir_provenance_ref]
+    properties:
+      run_id:
+        type: string
+        format: uuid
+      extractors:
+        type: object
+        additionalProperties: false
+        required: [a, v, o]
+        properties:
+          a: { $ref: "#/$defs/ExtractorEvidence" }
+          v: { $ref: "#/$defs/ExtractorEvidence" }
+          o: { $ref: "#/$defs/ExtractorEvidence" }
+      consensus: { $ref: "#/$defs/ConsensusEvidence" }
+      atomicity:
+        type: object
+        additionalProperties: false
+        required: [state, llm_pair, jaccard]
+        properties:
+          state: { $ref: "#/$defs/AtomicityState" }
+          llm_pair:
+            type: array
+            minItems: 2
+            maxItems: 2
+            items:
+              type: object
+              additionalProperties: false
+              required: [model, pin]
+              properties:
+                model: { type: string }
+                pin:   { type: string }
+          jaccard:
+            type: number
+            minimum: 0.0
+            maximum: 1.0
+      reviewer_signoffs:
+        type: array
+        minItems: 2
+        maxItems: 4
+        items: { $ref: "#/$defs/ReviewerSignoff" }
+      fhir_provenance_ref:
+        type: string
+        description: Pointer to FHIR Provenance/<id>.json for this record.
+      tools_lock_sha:
+        type: string
+        pattern: "^[0-9a-f]{64}$"
+
+# -----------------------------------------------------------------------------
+# 3. ROOT TYPE — RecommendationRecordHTN
+# -----------------------------------------------------------------------------
+type: object
+additionalProperties: false
+required:
+  - recommendation_id
+  - text_verbatim
+  - editorial_summary
+  - acc_aha_cor
+  - acc_aha_loe
+  - section_path
+  - atomic_units
+  - pico_precheck
+  - anchors
+  - normalization_log
+  - provenance
+  - schema_version
+  - guideline_manifest_ref
+properties:
+
+  schema_version:
+    type: string
+    const: "1.0.0"
+
+  guideline_manifest_ref:
+    type: string
+    description: Pointer to `schemas/guideline-manifest-hbp-2025.yaml` instance for this run.
+
+  recommendation_id:
+    type: string
+    pattern: "^rec-[0-9a-f]{16}$"
+    description: Deterministic; derived from (pdf_sha256, page, row_bbox).
+
+  parent_recommendation_id:
+    type: [string, "null"]
+    pattern: "^rec-[0-9a-f]{16}$|^null$"
+    default: null
+
+  text_verbatim:
+    type: string
+    minLength: 1
+    description: >
+      Exact recommendation text from the source recommendation-box row, in
+      Unicode NFC, with reversible normalization metadata recorded in
+      `normalization_log`. No paraphrase. No ASCII-fold. No "clarifications."
+
+  editorial_summary:
+    type: ["null"]
+    description: >
+      MUST be null at end of Gate 1. Later phases may attach editorial summaries
+      in a separate, clearly-labeled artifact; they NEVER replace text_verbatim
+      and NEVER feed CQL or CDS Hooks.
+
+  acc_aha_cor: { $ref: "#/$defs/AccAhaCOR" }
+  acc_aha_loe: { $ref: "#/$defs/AccAhaLOE" }
+
+  section_path:
+    type: array
+    minItems: 1
+    items: { type: string }
+
+  atomic_units:
+    type: array
+    minItems: 1
+    items: { $ref: "#/$defs/AtomicUnit" }
+
+  qualifier_spans:
+    type: array
+    items: { $ref: "#/$defs/AtomicUnit" }
+
+  exclusion_spans:
+    type: array
+    items: { $ref: "#/$defs/AtomicUnit" }
+
+  monitoring_spans:
+    type: array
+    items: { $ref: "#/$defs/AtomicUnit" }
+
+  citation_spans:
+    type: array
+    items: { $ref: "#/$defs/AtomicUnit" }
+
+  pico_precheck: { $ref: "#/$defs/PicoPrecheck" }
+
+  bp_thresholds:
+    type: array
+    items: { $ref: "#/$defs/BPThreshold" }
+    default: []
+
+  drug_rules:
+    type: object
+    additionalProperties: false
+    properties:
+      first_line: { type: array, items: { $ref: "#/$defs/DrugRule" } }
+      allowlist:  { type: array, items: { $ref: "#/$defs/DrugRule" } }
+      denylist:   { type: array, items: { $ref: "#/$defs/DrugRule" } }
+      second_line: { type: array, items: { $ref: "#/$defs/DrugRule" } }
+      alternative: { type: array, items: { $ref: "#/$defs/DrugRule" } }
+    default: {}
+
+  contraindications:
+    type: array
+    items: { $ref: "#/$defs/Contraindication" }
+    default: []
+
+  monitoring:
+    type: array
+    items: { $ref: "#/$defs/Monitoring" }
+    default: []
+
+  risk_engine: { $ref: "#/$defs/RiskEngineBinding" }
+
+  references:
+    type: array
+    items: { $ref: "#/$defs/Reference" }
+    default: []
+
+  predecessor_2017: { $ref: "#/$defs/PredecessorMapping" }
+
+  anchors: { $ref: "#/$defs/Anchor" }
+
+  normalization_log: { $ref: "#/$defs/NormalizationLog" }
+
+  supportive_text_ids:
+    type: array
+    items: { type: string }
+    description: SAIR region IDs of supportive-text blocks bound to this recommendation.
+
+  phi_scrub:
+    type: object
+    additionalProperties: false
+    required: [scanned_at, hits]
+    properties:
+      scanned_at: { type: string, format: date-time }
+      hits:
+        type: array
+        maxItems: 0
+        description: MUST be empty. Any hit BLOCKS publication and triggers the PHI hazard handler.
+      detectors:
+        type: array
+        items: { type: string, enum: [presidio, spacy-med7, regex-us] }
+
+  copyright_envelope:
+    type: object
+    additionalProperties: false
+    required: [verbatim_chars]
+    properties:
+      verbatim_chars: { type: integer, minimum: 0 }
+      envelope_version:
+        type: string
+        description: Identifier of the publisher-agreed quote-extent envelope in force.
+
+  provenance: { $ref: "#/$defs/ProvenanceBundle" }
+
+# -----------------------------------------------------------------------------
+# 4. CROSS-FIELD INVARIANTS (validators MUST enforce)
+# -----------------------------------------------------------------------------
+# JSON Schema cannot express all of these directly; the framework's validator
+# (`aiwg-cpg-htn validate records`) implements them. Each invariant is a
+# release-blocker if violated.
+# -----------------------------------------------------------------------------
+
+invariants:
+
+  - id: INV-01
+    description: >
+      Every span (atomic_units[].span, qualifier_spans[].span, exclusion_spans[].span,
+      monitoring_spans[].span, citation_spans[].span, drug_rules.*.source_span,
+      bp_thresholds[].source_span, contraindications[].text_span,
+      monitoring[].text_span, risk_engine.source_span, references[].source_span,
+      predecessor_2017.rationale_span) MUST be a valid contiguous range within
+      `text_verbatim` (0 <= start < end <= len(text_verbatim)).
+
+  - id: INV-02
+    description: >
+      For each atomic_unit u, text_verbatim[u.span[0]:u.span[1]] MUST be the
+      substring the LLM proposers identified; verified, never trusted.
+
+  - id: INV-03
+    description: >
+      Atomic units of kind `atomic-recommendation` inherit the parent's
+      acc_aha_cor and acc_aha_loe by definition. NO atomic unit may carry a
+      different COR or LOE; any such case is a parse defect and escalates.
+
+  - id: INV-04
+    description: >
+      `editorial_summary` MUST be null at Gate 1 exit. Validators reject any
+      non-null value at this lifecycle stage.
+
+  - id: INV-05
+    description: >
+      `provenance.consensus.state` at Gate 1 exit MUST be `gate-1-passed`.
+      `provenance.reviewer_signoffs` MUST contain exactly two entries with
+      distinct `reviewer_id` and distinct `role`, both with `decision` in
+      {accept, accept-with-edit}, with non-overlapping role per the Gate-1
+      composition matrix in `extract-recommendation-cor-loe`.
+
+  - id: INV-06
+    description: >
+      `provenance.reviewer_signoffs[*].content_hash` MUST equal the SHA-256
+      over the canonicalized record (with reviewer_signoffs stripped) at
+      signing time. Any mismatch = post-signoff mutation = release blocker.
+
+  - id: INV-07
+    description: >
+      No `ReviewerSignoff.edits[]` entry may target `acc_aha_cor` or
+      `acc_aha_loe`. Such requests MUST be reclassified as `reject-rework`.
+
+  - id: INV-08
+    description: >
+      `phi_scrub.hits` MUST be empty. Any hit BLOCKS publication.
+
+  - id: INV-09
+    description: >
+      For every `DrugRule` with `intent == "denylist"`, `hard_block_basis`
+      MUST be present and the `Contraindication` set MUST contain a record
+      with the same `drug_classes` and `population_scope`. The hard-block
+      cannot exist without an explicit anchor in source.
+
+  - id: INV-10
+    description: >
+      `risk_engine.name == "PCE-legacy"` implies `risk_engine.legacy == true`
+      and the binding MUST NOT propagate to CQL or CDS Hooks emission.
+
+  - id: INV-11
+    description: >
+      `bp_thresholds[*].measurement_context` MUST be a member of MeasurementContext.
+      `unspecified` is permitted only when the source itself is unspecified;
+      downstream skills will route such records to escalation.
+
+  - id: INV-12
+    description: >
+      `references[*].ref_id` MUST resolve to a footnote in SAIR for the same
+      `pdf_sha256` and `page`. Unresolved references = release blocker.
+
+  - id: INV-13
+    description: >
+      `provenance.atomicity.jaccard` MUST be >= 0.95 OR
+      `provenance.atomicity.state` MUST be `held`.
+
+  - id: INV-14
+    description: >
+      `provenance.consensus.similarity_min_pairwise` MUST be >= 0.99 for any
+      record advancing to Gate 1.
+
+  - id: INV-15
+    description: >
+      `acc_aha_cor` and `acc_aha_loe` MUST be members of their closed enums
+      verbatim; auto-correction is forbidden.
+
+  - id: INV-16
+    description: >
+      `pico_precheck.populations[]` MUST be non-empty AND
+      `pico_precheck.population_present == true`. A multi-population source
+      recommendation MUST be split into multiple records with one population
+      each before reaching Gate 1.
+
+  - id: INV-17
+    description: >
+      `predecessor_2017.reviewer_acknowledged` MUST be true at Gate 1 exit.
+
+  - id: INV-18
+    description: >
+      `copyright_envelope.verbatim_chars` summed across all advanced records
+      MUST not exceed the publisher-agreed envelope recorded in
+      `guideline-manifest-hbp-2025.yaml`.
+
+  - id: INV-19
+    description: >
+      The record's overall content hash (canonicalized JSON over all fields
+      except `provenance.reviewer_signoffs`) MUST be deterministic across
+      re-runs given the same inputs and tools_lock.
+
+  - id: INV-20
+    description: >
+      Records MUST NOT cross-reference each other via `parent_recommendation_id`
+      cycles. The validator checks acyclicity.
+
+# =============================================================================
+# 5. WORKED EXAMPLES
+# -----------------------------------------------------------------------------
+# These examples are illustrative shape-correctness fixtures. EVERY field whose
+# value can ONLY come from the published source PDF is marked `HUMAN_FILL` with
+# explicit instructions describing what must be sourced and how. The pipeline
+# refuses to operate on records containing `HUMAN_FILL` tokens.
+#
+# Two examples are provided:
+#   5.1 Diagnosis recommendation (out-of-office BP confirmation)
+#   5.2 Pregnancy denylist (RAAS inhibitors / MRA / direct renin inhibitor)
+#
+# IMPORTANT: text_verbatim, acc_aha_cor, acc_aha_loe, page, bbox, char_spans,
+# section_path values are NOT to be invented. They must be drawn directly from
+# the 2025 ACC/AHA HBP Guideline PDF by the parse + extract pipeline and
+# attested at Gate 1.
+# =============================================================================
+
+examples:
+
+  # ---------------------------------------------------------------------------
+  # 5.1 Diagnosis recommendation — out-of-office BP confirmation
+  # ---------------------------------------------------------------------------
+  - schema_version: "1.0.0"
+    guideline_manifest_ref: "guideline-manifest-hbp-2025.v1.0.0+ACC-AHA-2025+US+HUMAN_FILL_DATE.yaml"
+    recommendation_id: "rec-HUMAN_FILL_16HEX"
+    parent_recommendation_id: null
+
+    text_verbatim: |
+      HUMAN_FILL: Verbatim recommendation text from the ACC/AHA recommendation
+      box on out-of-office BP confirmation (HBPM/ABPM) for diagnosing
+      hypertension. Copy byte-for-byte from the source PDF after NFC
+      normalization. Do NOT paraphrase. Do NOT trim. Preserve internal
+      whitespace and footnote markers verbatim. Footnote markers will be
+      resolved by the parser; their characters remain in this string.
+
+    editorial_summary: null
+
+    acc_aha_cor: "HUMAN_FILL_COR_VERBATIM_FROM_BOX"   # one of: I, IIa, IIb, III: No Benefit, III: Harm
+    acc_aha_loe: "HUMAN_FILL_LOE_VERBATIM_FROM_BOX"   # one of: A, B-R, B-NR, C-LD, C-EO
+
+    section_path:
+      - "HUMAN_FILL: top-level chapter, e.g., '5. Diagnosis and Classification of Hypertension'"
+      - "HUMAN_FILL: subsection, e.g., '5.2 Out-of-Office BP Measurement'"
+      - "HUMAN_FILL: leaf heading exactly as printed"
+
+    atomic_units:
+      - unit_id: "au-HUMAN_FILL_16HEX"
+        span: [0, 0]   # HUMAN_FILL: [start,end] character offsets into text_verbatim once filled
+        kind: atomic-recommendation
+        inherits_from: "rec-HUMAN_FILL_16HEX"
+        llm_proposers:
+          - { model: "claude-opus-4", pin: "HUMAN_FILL_PIN" }
+          - { model: "gpt-class-x",   pin: "HUMAN_FILL_PIN" }
+        jaccard_with_peer: 1.0
+
+    qualifier_spans: []
+    exclusion_spans: []
+    monitoring_spans: []
+    citation_spans: []
+
+    pico_precheck:
+      population_present: true
+      intervention_present: true
+      populations: [general-adult]
+      comparator_kind: none-stated
+      outcome_kind: implicit-by-source
+
+    bp_thresholds:
+      # Diagnosis-threshold examples; values MUST be sourced from the recommendation
+      # text or its bound supportive-text block. Do not import thresholds from any
+      # other guideline body (e.g., ESC/ESH).
+      - component: SBP/DBP
+        operator: ge
+        low_mmHg: 0          # HUMAN_FILL: integer mm Hg from source
+        high_mmHg: null
+        measurement_context: hbpm
+        ucum_unit: "mm[Hg]"
+        source_span: [0, 0]  # HUMAN_FILL
+      - component: SBP/DBP
+        operator: ge
+        low_mmHg: 0          # HUMAN_FILL: integer mm Hg from source
+        high_mmHg: null
+        measurement_context: abpm-daytime
+        ucum_unit: "mm[Hg]"
+        source_span: [0, 0]  # HUMAN_FILL
+
+    drug_rules: {}
+
+    contraindications: []
+
+    monitoring:
+      - text_span: [0, 0]    # HUMAN_FILL
+        cadence_iso8601_duration: null
+        analyte_loinc_candidates: []
+
+    references:
+      - ref_id: "fn-HUMAN_FILL"
+        doi: null
+        pmid: null
+        source_span: [0, 0]  # HUMAN_FILL
+
+    predecessor_2017:
+      relation: undetermined # HUMAN_FILL: revised | unchanged | new — confirmed at Gate 1
+      predecessor_id: null
+      rationale_span: null
+      reviewer_acknowledged: false  # MUST be true at Gate 1 exit
+
+    anchors:
+      pdf_sha256: "HUMAN_FILL_64HEX"
+      sair_sha256: "HUMAN_FILL_64HEX"
+      page: 0                # HUMAN_FILL: integer page in the source PDF
+      bbox: [0.0, 0.0, 0.0, 0.0]   # HUMAN_FILL
+      char_spans: [[0, 0]]   # HUMAN_FILL
+      cell_bboxes:
+        cor: [0.0, 0.0, 0.0, 0.0]
+        loe: [0.0, 0.0, 0.0, 0.0]
+        recommendation: [0.0, 0.0, 0.0, 0.0]
+      reading_order_index: 0
+      section_path:
+        - "HUMAN_FILL: chapter"
+        - "HUMAN_FILL: subsection"
+        - "HUMAN_FILL: leaf"
+
+    normalization_log:
+      nfc_applied: true
+      transforms:
+        - kind: unicode-nfc
+          position: 0
+          original: "HUMAN_FILL"
+          replacement: "HUMAN_FILL"
+
+    supportive_text_ids:
+      - "HUMAN_FILL: SAIR region id of the immediately following supportive-text block"
+
+    phi_scrub:
+      scanned_at: "HUMAN_FILL_ISO_DATETIME"
+      hits: []
+      detectors: [presidio, spacy-med7, regex-us]
+
+    copyright_envelope:
+      verbatim_chars: 0      # HUMAN_FILL: len(text_verbatim)
+      envelope_version: "HUMAN_FILL: publisher-agreed envelope identifier"
+
+    provenance:
+      run_id: "HUMAN_FILL_UUID"
+      extractors:
+        a:
+          modality: pdf-text-deterministic
+          tool: "pymupdf+sair"
+          pin: "HUMAN_FILL_PIN"
+          prompt_id: null
+          raw_response_sha: null
+          confidence_min: null
+        v:
+          modality: vision-language
+          tool: "HUMAN_FILL_VLM_NAME"
+          pin: "HUMAN_FILL_VLM_PIN"
+          prompt_id: "extract-recbox-v1"
+          raw_response_sha: "HUMAN_FILL_64HEX"
+          confidence_min: null
+        o:
+          modality: ocr-multi-engine
+          tool: "tesseract+paddleocr+surya"
+          pin: "HUMAN_FILL_PINS"
+          prompt_id: null
+          raw_response_sha: null
+          confidence_min: 0.95
+      consensus:
+        state: gate-1-pending      # set to gate-1-passed only after both signoffs
+        similarity_min_pairwise: 0.99
+        cor_agreement: true
+        loe_agreement: true
+      atomicity:
+        state: agreed
+        llm_pair:
+          - { model: "claude-opus-4", pin: "HUMAN_FILL_PIN" }
+          - { model: "gpt-class-x",   pin: "HUMAN_FILL_PIN" }
+        jaccard: 1.0
+      reviewer_signoffs:
+        # One of these is the hypertension specialist (required on every record);
+        # the second co-reviewer for diagnosis/measurement records is the
+        # clinical informaticist per the Gate-1 composition matrix.
+        - reviewer_id: "HUMAN_FILL: stable id from gate1-register"
+          role: hypertension-specialist
+          decision: accept
+          rationale: "HUMAN_FILL: reviewer's free-text rationale, non-empty"
+          signed_at: "HUMAN_FILL_ISO_DATETIME"
+          signature: "HUMAN_FILL_SIGNATURE"
+          content_hash: "HUMAN_FILL_64HEX"
+          edits: []
+        - reviewer_id: "HUMAN_FILL: stable id from gate1-register"
+          role: clinical-informaticist
+          decision: accept
+          rationale: "HUMAN_FILL"
+          signed_at: "HUMAN_FILL_ISO_DATETIME"
+          signature: "HUMAN_FILL_SIGNATURE"
+          content_hash: "HUMAN_FILL_64HEX"
+          edits: []
+      fhir_provenance_ref: "Provenance/HUMAN_FILL_ID"
+      tools_lock_sha: "HUMAN_FILL_64HEX"
+
+  # ---------------------------------------------------------------------------
+  # 5.2 Pregnancy denylist — RAAS inhibitors / MRA / direct renin inhibitor
+  # ---------------------------------------------------------------------------
+  - schema_version: "1.0.0"
+    guideline_manifest_ref: "guideline-manifest-hbp-2025.v1.0.0+ACC-AHA-2025+US+HUMAN_FILL_DATE.yaml"
+    recommendation_id: "rec-HUMAN_FILL_16HEX"
+    parent_recommendation_id: null
+
+    text_verbatim: |
+      HUMAN_FILL: Verbatim recommendation text from the ACC/AHA recommendation
+      box concerning antihypertensive use during pregnancy. The 2025 source is
+      the only authority for which agents are denylisted, the strength of the
+      prohibition, and the exact phrasing. The pipeline does NOT presume the
+      pregnancy denylist; it asserts it only when an explicit anchor (e.g., a
+      Class III: Harm row, or an explicit "should not" statement) is present
+      in the source. Copy byte-for-byte after NFC normalization.
+
+    editorial_summary: null
+
+    acc_aha_cor: "HUMAN_FILL_COR_VERBATIM_FROM_BOX"   # likely "III: Harm" — but MUST be sourced
+    acc_aha_loe: "HUMAN_FILL_LOE_VERBATIM_FROM_BOX"
+
+    section_path:
+      - "HUMAN_FILL: chapter, e.g., 'Special Populations'"
+      - "HUMAN_FILL: subsection, e.g., 'Pregnancy and Postpartum'"
+      - "HUMAN_FILL: leaf heading exactly as printed"
+
+    atomic_units:
+      - unit_id: "au-HUMAN_FILL_16HEX"
+        span: [0, 0]
+        kind: atomic-recommendation
+        inherits_from: "rec-HUMAN_FILL_16HEX"
+        llm_proposers:
+          - { model: "claude-opus-4", pin: "HUMAN_FILL_PIN" }
+          - { model: "gpt-class-x",   pin: "HUMAN_FILL_PIN" }
+        jaccard_with_peer: 1.0
+
+    qualifier_spans: []
+    exclusion_spans: []
+    monitoring_spans: []
+    citation_spans: []
+
+    pico_precheck:
+      population_present: true
+      intervention_present: true
+      populations: [pregnant]
+      comparator_kind: none-stated
+      outcome_kind: implicit-by-source
+
+    bp_thresholds: []
+
+    drug_rules:
+      first_line: []
+      allowlist: []
+      second_line: []
+      alternative: []
+      denylist:
+        - intent: denylist
+          classes:
+            # The classes below are illustrative of the denylist shape.
+            # Pipeline MUST verify each class is anchored in source text;
+            # anything not explicitly named in the recommendation cell or its
+            # bound supportive text is removed and escalated.
+            - ace-inhibitor
+            - arb
+            - direct-renin-inhibitor
+            - mra
+          hard_block_basis: cor-iii-harm   # MUST match the source-anchored basis
+          mentions:
+            - text: "HUMAN_FILL: exact agent name string from source, if present"
+              note: "Audit-only; never enters CQL."
+              source_span: [0, 0]
+          source_span: [0, 0]
+
+    contraindications:
+      - text_span: [0, 0]
+        basis: cor-iii-harm
+        drug_classes: [ace-inhibitor, arb, direct-renin-inhibitor, mra]
+        population_scope: [pregnant]
+
+    monitoring: []
+
+    references:
+      - ref_id: "fn-HUMAN_FILL"
+        doi: null
+        pmid: null
+        source_span: [0, 0]
+
+    predecessor_2017:
+      relation: undetermined
+      predecessor_id: null
+      rationale_span: null
+      reviewer_acknowledged: false
+
+    anchors:
+      pdf_sha256: "HUMAN_FILL_64HEX"
+      sair_sha256: "HUMAN_FILL_64HEX"
+      page: 0
+      bbox: [0.0, 0.0, 0.0, 0.0]
+      char_spans: [[0, 0]]
+      cell_bboxes:
+        cor: [0.0, 0.0, 0.0, 0.0]
+        loe: [0.0, 0.0, 0.0, 0.0]
+        recommendation: [0.0, 0.0, 0.0, 0.0]
+      reading_order_index: 0
+      section_path:
+        - "HUMAN_FILL: chapter"
+        - "HUMAN_FILL: subsection"
+        - "HUMAN_FILL: leaf"
+
+    normalization_log:
+      nfc_applied: true
+      transforms:
+        - kind: unicode-nfc
+          position: 0
+          original: "HUMAN_FILL"
+          replacement: "HUMAN_FILL"
+
+    supportive_text_ids:
+      - "HUMAN_FILL: SAIR region id of supportive-text block on pregnancy"
+
+    phi_scrub:
+      scanned_at: "HUMAN_FILL_ISO_DATETIME"
+      hits: []
+      detectors: [presidio, spacy-med7, regex-us]
+
+    copyright_envelope:
+      verbatim_chars: 0
+      envelope_version: "HUMAN_FILL"
+
+    provenance:
+      run_id: "HUMAN_FILL_UUID"
+      extractors:
+        a:
+          modality: pdf-text-deterministic
+          tool: "pymupdf+sair"
+          pin: "HUMAN_FILL_PIN"
+          prompt_id: null
+          raw_response_sha: null
+          confidence_min: null
+        v:
+          modality: vision-language
+          tool: "HUMAN_FILL_VLM_NAME"
+          pin: "HUMAN_FILL_VLM_PIN"
+          prompt_id: "extract-recbox-v1"
+          raw_response_sha: "HUMAN_FILL_64HEX"
+          confidence_min: null
+        o:
+          modality: ocr-multi-engine
+          tool: "tesseract+paddleocr+surya"
+          pin: "HUMAN_FILL_PINS"
+          prompt_id: null
+          raw_response_sha: null
+          confidence_min: 0.95
+      consensus:
+        state: gate-1-pending
+        similarity_min_pairwise: 0.99
+        cor_agreement: true
+        loe_agreement: true
+      atomicity:
+        state: agreed
+        llm_pair:
+          - { model: "claude-opus-4", pin: "HUMAN_FILL_PIN" }
+          - { model: "gpt-class-x",   pin: "HUMAN_FILL_PIN" }
+        jaccard: 1.0
+      reviewer_signoffs:
+        # Per the Gate-1 composition matrix in extract-recommendation-cor-loe,
+        # pregnancy / postpartum records require MFM (or obstetric medicine)
+        # AND clinical pharmacology. The hypertension specialist's signoff is
+        # carried separately on the cohort register and may also appear here
+        # if institutional policy requires three signatures; the schema
+        # accepts up to four signoffs to accommodate this.
+        - reviewer_id: "HUMAN_FILL"
+          role: mfm-or-obstetric-medicine
+          decision: accept
+          rationale: "HUMAN_FILL"
+          signed_at: "HUMAN_FILL_ISO_DATETIME"
+          signature: "HUMAN_FILL_SIGNATURE"
+          content_hash: "HUMAN_FILL_64HEX"
+          edits: []
+        - reviewer_id: "HUMAN_FILL"
+          role: clinical-pharmacologist
+          decision: accept
+          rationale: "HUMAN_FILL"
+          signed_at: "HUMAN_FILL_ISO_DATETIME"
+          signature: "HUMAN_FILL_SIGNATURE"
+          content_hash: "HUMAN_FILL_64HEX"
+          edits: []
+      fhir_provenance_ref: "Provenance/HUMAN_FILL_ID"
+      tools_lock_sha: "HUMAN_FILL_64HEX"
+
+# =============================================================================
+# 6. CHANGE CONTROL
+# -----------------------------------------------------------------------------
+# Any change to this schema (closed enums, required fields, invariants, or
+# example fixtures) requires:
+#   - A change-controlled diff with regression evaluation against the golden set.
+#   - Panel-chair signoff.
+#   - Increment of `schema_version` (semver: breaking = major).
+#   - Update of `last_reviewed`.
+#   - Update of `tools_lock` references in producing skills.
+# =============================================================================
+
+change_control:
+  semver: true
+  golden_set_regression_required: true
+  panel_chair_signoff_required: true
+  parent_skills_to_update_on_breaking_change:
+    - cpg-htn-2025-acc-aha/skills/extract-recommendation-cor-loe
+    - cpg-htn-2025-acc-aha/skills/parse-acc-aha-recbox
+    - cpg-htn-2025-acc-aha/skills/bind-htn-vocab
+    - cpg-htn-2025-acc-aha/skills/pico-decompose-htn
+    - cpg-htn-2025-acc-aha/skills/extract-bp-thresholds
+    - cpg-htn-2025-acc-aha/skills/extract-pharm-rules
+    - cpg-htn-2025-acc-aha/skills/emit-fhir-plandefinition-htn
+    - cpg-htn-2025-acc-aha/skills/emit-cql-htn
+    - cpg-htn-2025-acc-aha/skills/safety-hbp

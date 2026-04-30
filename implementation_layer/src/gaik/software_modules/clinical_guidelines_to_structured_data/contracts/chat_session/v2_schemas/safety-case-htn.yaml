@@ -1,0 +1,253 @@
+# ... (continuation of example 6.1; the file resumes mid-H-08 mitigations[]) ...
+
+      - { hazard_id: H-08, title: "LLM-hallucinated recommendation", category: pipeline-integrity, intended_use_scope: { age_min_inclusive: 18, populations: [all-build-records], out_of_scope_populations: [pediatric] }, narrative: { description_verbatim_anchored: true, body: "HUMAN_FILL" }, basis: { cor: III-Harm, loe: C-EO, cor_inheritance_kind: derived-most-restrictive, source_anchors: [ { anchor_kind: pipeline-control-prov-evidence, pipeline_control_evidence: { control_kind: extract-recommendation-cor-loe-triple-modal, prov_activity_id: "HUMAN_FILL_PROV_ACT", prov_bundle_uri: null } } ] }, clinical_consequence: { on_occurrence: "Misleading clinical recommendation surfaces in published artifact; downstream prescribing harm possible." }, pre_mitigation_risk: { severity: catastrophic, likelihood: rare, combined: high }, mitigations: [ { mitigation_id: "mit-HUMAN_FILL_16HEX", kind: pipeline-control, target: { control_kind: gate1-register-immutability, prov_activity_id: "HUMAN_FILL_PROV_ACT", prov_bundle_uri: null }, asserts_invariant_kind: null, rationale: "Gate-1 SME signoff with two-person rule and append-only audit chain.", verification: { verifies: true, verified_by_reference_test_id: null, verified_by_prov_activity_id: "HUMAN_FILL_PROV_ACT", verified_at: "HUMAN_FILL_ISO_DATETIME", verification_method: prov-bundle-evidence } }, { mitigation_id: "mit-HUMAN_FILL_16HEX", kind: pipeline-control, target: { control_kind: parse-acc-aha-recbox-cell-shape-compliance, prov_activity_id: "HUMAN_FILL_PROV_ACT", prov_bundle_uri: null }, asserts_invariant_kind: null, rationale: "Cell-shape-compliance enforces no-text-insertion at recbox parse; closed (COR, LOE, Recommendation, Supportive, Citations) shape.", verification: { verifies: true, verified_by_reference_test_id: null, verified_by_prov_activity_id: "HUMAN_FILL_PROV_ACT", verified_at: "HUMAN_FILL_ISO_DATETIME", verification_method: prov-bundle-evidence } }, { mitigation_id: "mit-HUMAN_FILL_16HEX", kind: pipeline-control, target: { control_kind: extract-recommendation-cor-loe-triple-modal, prov_activity_id: "HUMAN_FILL_PROV_ACT", prov_bundle_uri: null }, asserts_invariant_kind: null, rationale: "Triple-modal consensus (deterministic-text, VLM, OCR-fallback) at P9 prevents single-source LLM-only paths.", verification: { verifies: true, verified_by_reference_test_id: null, verified_by_prov_activity_id: "HUMAN_FILL_PROV_ACT", verified_at: "HUMAN_FILL_ISO_DATETIME", verification_method: prov-bundle-evidence } }, { mitigation_id: "mit-HUMAN_FILL_16HEX", kind: pipeline-control, target: { control_kind: safety-case-attest-bundle-hash, prov_activity_id: "HUMAN_FILL_PROV_ACT", prov_bundle_uri: null }, asserts_invariant_kind: null, rationale: "Gate-3 bundle hash recompute binds attester to the exact published artifact set.", verification: { verifies: true, verified_by_reference_test_id: null, verified_by_prov_activity_id: "HUMAN_FILL_PROV_ACT", verified_at: "HUMAN_FILL_ISO_DATETIME", verification_method: prov-bundle-evidence } } ], post_mitigation_risk: { severity: catastrophic, likelihood: rare, combined: high }, residual_risk_justification: { is_acceptable_under_iso14971: true, basis: "HUMAN_FILL: ALARP under closed-set pipeline controls; severity remains catastrophic by design (severity is not reducible by pipeline mitigations alone), likelihood reduced to `rare` by the four mandatory pipeline controls.", benefit_risk_summary: "HUMAN_FILL", out_of_scope_assertion: "HUMAN_FILL", effective_acceptable_residual_risk_max: high } }
+
+      - { hazard_id: H-09, title: "Terminology drift", category: pipeline-integrity, intended_use_scope: { age_min_inclusive: 18, populations: [all-build-records], out_of_scope_populations: [pediatric] }, narrative: { description_verbatim_anchored: true, body: "HUMAN_FILL" }, basis: { cor: IIa, loe: C-EO, cor_inheritance_kind: derived-most-restrictive, source_anchors: [ { anchor_kind: pipeline-control-prov-evidence, pipeline_control_evidence: { control_kind: manifest-terminology-edition-pin, prov_activity_id: "HUMAN_FILL_PROV_ACT", prov_bundle_uri: null } } ] }, clinical_consequence: { on_occurrence: "Stale or drifted terminology editions cause misclassified medications, conditions, or labs in downstream CDS." }, pre_mitigation_risk: { severity: major, likelihood: probable, combined: high }, mitigations: [ { mitigation_id: "mit-HUMAN_FILL_16HEX", kind: pipeline-control, target: { control_kind: manifest-terminology-edition-pin, prov_activity_id: "HUMAN_FILL_PROV_ACT", prov_bundle_uri: null }, asserts_invariant_kind: null, rationale: "Manifest pins terminology editions; bind-htn-vocab consults pinned editions only.", verification: { verifies: true, verified_by_reference_test_id: null, verified_by_prov_activity_id: "HUMAN_FILL_PROV_ACT", verified_at: "HUMAN_FILL_ISO_DATETIME", verification_method: prov-bundle-evidence } }, { mitigation_id: "mit-HUMAN_FILL_16HEX", kind: pipeline-control, target: { control_kind: manifest-no-auto-update, prov_activity_id: "HUMAN_FILL_PROV_ACT", prov_bundle_uri: null }, asserts_invariant_kind: null, rationale: "Active manifest is immutable; terminology edition changes require a new manifest version under panel-chair signoff.", verification: { verifies: true, verified_by_reference_test_id: null, verified_by_prov_activity_id: "HUMAN_FILL_PROV_ACT", verified_at: "HUMAN_FILL_ISO_DATETIME", verification_method: prov-bundle-evidence } }, { mitigation_id: "mit-HUMAN_FILL_16HEX", kind: documentation, target: { artifact: retraction-notice, section: "terminology-drift", artifact_path: "work/HUMAN_FILL_RUN_ID/docs/retraction-notice.md", artifact_sha256: "HUMAN_FILL_64HEX" }, asserts_invariant_kind: null, rationale: "Parameterized retraction-notice template available for terminology-drift events.", verification: { verifies: true, verified_by_reference_test_id: null, verified_at: "HUMAN_FILL_ISO_DATETIME", verification_method: artifact-section-non-empty } } ], post_mitigation_risk: { severity: major, likelihood: rare, combined: low }, residual_risk_justification: { is_acceptable_under_iso14971: true, basis: "HUMAN_FILL", benefit_risk_summary: "HUMAN_FILL", out_of_scope_assertion: "HUMAN_FILL", effective_acceptable_residual_risk_max: medium } }
+
+      - { hazard_id: H-10, title: "Source guideline updated / erratum", category: pipeline-integrity, intended_use_scope: { age_min_inclusive: 18, populations: [all-build-records], out_of_scope_populations: [pediatric] }, narrative: { description_verbatim_anchored: true, body: "HUMAN_FILL" }, basis: { cor: IIa, loe: C-EO, cor_inheritance_kind: derived-most-restrictive, source_anchors: [ { anchor_kind: pipeline-control-prov-evidence, pipeline_control_evidence: { control_kind: acquire-hbp-2025-source-errata-watch, prov_activity_id: "HUMAN_FILL_PROV_ACT", prov_bundle_uri: null } } ] }, clinical_consequence: { on_occurrence: "Build derived from a superseded source surfaces stale clinical recommendations." }, pre_mitigation_risk: { severity: major, likelihood: occasional, combined: medium }, mitigations: [ { mitigation_id: "mit-HUMAN_FILL_16HEX", kind: pipeline-control, target: { control_kind: acquire-hbp-2025-source-errata-watch, prov_activity_id: "HUMAN_FILL_PROV_ACT", prov_bundle_uri: null }, asserts_invariant_kind: null, rationale: "P1 polls publisher errata feeds and CrossRef is-corrected-by relations; new errata open manifest blockers.", verification: { verifies: true, verified_by_reference_test_id: null, verified_by_prov_activity_id: "HUMAN_FILL_PROV_ACT", verified_at: "HUMAN_FILL_ISO_DATETIME", verification_method: prov-bundle-evidence } }, { mitigation_id: "mit-HUMAN_FILL_16HEX", kind: pipeline-control, target: { control_kind: manifest-no-auto-update, prov_activity_id: "HUMAN_FILL_PROV_ACT", prov_bundle_uri: null }, asserts_invariant_kind: null, rationale: "Active manifest is immutable; source updates require a new manifest version.", verification: { verifies: true, verified_by_reference_test_id: null, verified_by_prov_activity_id: "HUMAN_FILL_PROV_ACT", verified_at: "HUMAN_FILL_ISO_DATETIME", verification_method: prov-bundle-evidence } }, { mitigation_id: "mit-HUMAN_FILL_16HEX", kind: pipeline-control, target: { control_kind: gate3-attestation-decline-on-errata-blocker, prov_activity_id: "HUMAN_FILL_PROV_ACT", prov_bundle_uri: null }, asserts_invariant_kind: null, rationale: "Gate-3 attestation declines publication when errata blockers are open on the active manifest.", verification: { verifies: true, verified_by_reference_test_id: null, verified_by_prov_activity_id: "HUMAN_FILL_PROV_ACT", verified_at: "HUMAN_FILL_ISO_DATETIME", verification_method: prov-bundle-evidence } }, { mitigation_id: "mit-HUMAN_FILL_16HEX", kind: documentation, target: { artifact: retraction-notice, section: "source-guideline-update", artifact_path: "work/HUMAN_FILL_RUN_ID/docs/retraction-notice.md", artifact_sha256: "HUMAN_FILL_64HEX" }, asserts_invariant_kind: null, rationale: "Parameterized retraction-notice template available for source-guideline-update events.", verification: { verifies: true, verified_by_reference_test_id: null, verified_at: "HUMAN_FILL_ISO_DATETIME", verification_method: artifact-section-non-empty } } ], post_mitigation_risk: { severity: major, likelihood: rare, combined: low }, residual_risk_justification: { is_acceptable_under_iso14971: true, basis: "HUMAN_FILL", benefit_risk_summary: "HUMAN_FILL", out_of_scope_assertion: "HUMAN_FILL", effective_acceptable_residual_risk_max: medium } }
+
+    cohort_axis_attestations:
+      iso14971_compliance_attested: false
+      no_relax_of_hard_block_attested: false
+      pce_legacy_never_propagates_attested: false
+      pregnancy_order_select_hardrefuse_attested: false
+      errata_watch_attested: false
+      source_admission_attested: false
+      mitigation_verification_attested: false
+      acceptable_residual_risk_within_ceiling_attested: false
+
+    signer:
+      signer_id: "rev-HUMAN_FILL_16HEX"
+      legal_name: "HUMAN_FILL"
+      preferred_credential_string: "HUMAN_FILL"
+      role: medical-director
+      institution: "HUMAN_FILL"
+      identity_proof:
+        ial: IAL3
+        aal: AAL3
+        proofing_method: "HUMAN_FILL"
+        proofing_evidence_uri: "https://HUMAN_FILL/director-proof"
+        proofed_at: "HUMAN_FILL_ISO_DATETIME"
+        proofed_by_org: "HUMAN_FILL"
+        proofed_by_person: null
+      credentials:
+        - kind: medical-director
+          issuer: "HUMAN_FILL"
+          evidence_uri: "https://HUMAN_FILL/director-credential"
+          valid_from: "HUMAN_FILL_ISO_DATE"
+          valid_until: null
+          verified_at: "HUMAN_FILL_ISO_DATETIME"
+          verified_by: "HUMAN_FILL"
+      coi_disclosures:
+        - kind: none
+          counterparty: null
+          scope: none
+          scope_detail: null
+          disclosed_at: "HUMAN_FILL_ISO_DATETIME"
+          mitigation: null
+          auto_disqualifies_safety_case: false
+      public_key:
+        algorithm: Ed25519
+        key_id: "HUMAN_FILL"
+        key_pem: "HUMAN_FILL"
+        fingerprint_sha256: "HUMAN_FILL_64HEX"
+      assigned_at: "HUMAN_FILL_ISO_DATETIME"
+
+    state: draft
+    signature: null
+
+    audit_log:
+      - { event_id: "evt-HUMAN_FILL_16HEX", occurred_at: "HUMAN_FILL_ISO_DATETIME", kind: safety-case-drafted,           actor_id: "HUMAN_FILL", payload_sha256: "HUMAN_FILL_64HEX", prov_activity_id: "HUMAN_FILL" }
+      - { event_id: "evt-HUMAN_FILL_16HEX", occurred_at: "HUMAN_FILL_ISO_DATETIME", kind: hazard-authored,               actor_id: "HUMAN_FILL", payload_sha256: "HUMAN_FILL_64HEX", prov_activity_id: "HUMAN_FILL" }
+      - { event_id: "evt-HUMAN_FILL_16HEX", occurred_at: "HUMAN_FILL_ISO_DATETIME", kind: hazard-mitigation-verified,    actor_id: "HUMAN_FILL", payload_sha256: "HUMAN_FILL_64HEX", prov_activity_id: "HUMAN_FILL" }
+      - { event_id: "evt-HUMAN_FILL_16HEX", occurred_at: "HUMAN_FILL_ISO_DATETIME", kind: risk-matrix-computed,          actor_id: "HUMAN_FILL", payload_sha256: "HUMAN_FILL_64HEX", prov_activity_id: "HUMAN_FILL" }
+      - { event_id: "evt-HUMAN_FILL_16HEX", occurred_at: "HUMAN_FILL_ISO_DATETIME", kind: residual-risk-recorded,        actor_id: "HUMAN_FILL", payload_sha256: "HUMAN_FILL_64HEX", prov_activity_id: "HUMAN_FILL" }
+
+    fixity:
+      safety_case_sha256: "HUMAN_FILL_64HEX"
+      computed_at: "HUMAN_FILL_ISO_DATETIME"
+      canonical_form: json-canonical-rfc8785
+
+  # ---------------------------------------------------------------------------
+  # 6.2 Signed Safety Case (envelope only; hazards[] reuses 6.1 shape)
+  # ---------------------------------------------------------------------------
+  - schema_version: "1.0.0"
+    safety_case_id: "sc-HUMAN_FILL_16HEX"
+    safety_case_version: "1.0.0"
+    predecessor_safety_case_id: null
+    predecessor_safety_case_state: null
+    guideline_manifest_ref: "guideline-manifest-hbp-2025.v1.0.0+ACC-AHA-2025+US+HUMAN_FILL_DATE.yaml"
+
+    build:
+      run_id: "HUMAN_FILL_UUID"
+      build_version_label: "v1.0.0+ACC-AHA-2025+US+HUMAN_FILL_ISO_DATE"
+      opened_at: "HUMAN_FILL_ISO_DATETIME"
+      signed_at: "HUMAN_FILL_ISO_DATETIME"
+      records_path: "work/HUMAN_FILL_RUN_ID/records.json"
+      records_sha256: "HUMAN_FILL_64HEX"
+      atomic_units_path: "work/HUMAN_FILL_RUN_ID/atomic-units.json"
+      atomic_units_sha256: "HUMAN_FILL_64HEX"
+      gate1_register_paths: ["work/HUMAN_FILL_RUN_ID/gate1/cohort-HUMAN_FILL_16HEX.signed.jsonld"]
+      gate1_register_sha256s: ["HUMAN_FILL_64HEX"]
+      gate2_register_paths: ["work/HUMAN_FILL_RUN_ID/gate2/cohort-HUMAN_FILL_16HEX.signed.jsonld"]
+      gate2_register_sha256s: ["HUMAN_FILL_64HEX"]
+      cds_hooks_dir: "work/HUMAN_FILL_RUN_ID/cds-hooks/"
+
+    intended_use_scope:
+      statement: "HUMAN_FILL: verbatim from manifest.intended_use.statement"
+      age_min_inclusive: 18
+      in_scope: ["Adults aged ≥ 18 with diagnosed or suspected hypertension."]
+      out_of_scope:
+        - "Pediatric blood pressure management (< 18)."
+        - "Acute stroke blood-pressure management."
+        - "Perioperative blood-pressure management."
+        - "Blood-pressure management in ICU shock."
+      acceptable_residual_risk_max: medium
+      effective_acceptable_residual_risk_max: medium
+
+    hazards:
+      # The full hazards[] array follows the shape of example 6.1's
+      # hazards[]; H-01 through H-10 are present exactly once each.
+      # Compact placeholder to keep this fixture tractable; a real
+      # signed Safety Case carries the full ten-entry array.
+      - { hazard_id: H-01, title: "RAAS / MRA / direct-renin in pregnancy", category: drug-population, intended_use_scope: { age_min_inclusive: 18, populations: [pregnant, postpartum], out_of_scope_populations: [pediatric] }, narrative: { description_verbatim_anchored: true, body: "HUMAN_FILL" }, basis: { cor: III-Harm, loe: B-NR, cor_inheritance_kind: native, source_anchors: [ { anchor_kind: cor-iii-harm-anchor, record_id: "rec-HUMAN_FILL_16HEX", atomic_unit_id: "au-HUMAN_FILL_16HEX" } ] }, clinical_consequence: { on_occurrence: "Fetal demise; oligohydramnios; neonatal renal failure." }, pre_mitigation_risk: { severity: catastrophic, likelihood: occasional, combined: high }, mitigations: [ { mitigation_id: "mit-HUMAN_FILL_16HEX", kind: cql-library, target: { library_id: "lib-HUMAN_FILL_16HEX", library_name: PregnancyHTN, hard_block_invariant_kind: pregnancy-denylist-order-select-hard-refuse, gate2_register_path: "...", gate2_register_sha256: "HUMAN_FILL_64HEX" }, asserts_invariant_kind: pregnancy-denylist-order-select-hard-refuse, rationale: "HUMAN_FILL", verification: { verifies: true, verified_by_reference_test_id: "HUMAN_FILL_TEST_ID", verified_at: "HUMAN_FILL_ISO_DATETIME", verification_method: reference-test-pack-pass } }, { mitigation_id: "mit-HUMAN_FILL_16HEX", kind: cds-hooks-service, target: { service_id: htn-pregnancy-denylist, hook: order-select, posture: hard-refuse }, asserts_invariant_kind: pregnancy-denylist-order-select-hard-refuse, rationale: "HUMAN_FILL", verification: { verifies: true, verified_by_reference_test_id: null, verified_at: "HUMAN_FILL_ISO_DATETIME", verification_method: service-descriptor-shape-match } } ], post_mitigation_risk: { severity: catastrophic, likelihood: rare, combined: high }, residual_risk_justification: { is_acceptable_under_iso14971: true, basis: "HUMAN_FILL", benefit_risk_summary: "HUMAN_FILL", out_of_scope_assertion: "HUMAN_FILL", effective_acceptable_residual_risk_max: high } }
+      # ... H-02 through H-10 follow the same shape ...
+
+    cohort_axis_attestations:
+      iso14971_compliance_attested: true
+      no_relax_of_hard_block_attested: true
+      pce_legacy_never_propagates_attested: true
+      pregnancy_order_select_hardrefuse_attested: true
+      errata_watch_attested: true
+      source_admission_attested: true
+      mitigation_verification_attested: true
+      acceptable_residual_risk_within_ceiling_attested: true
+
+    signer:
+      signer_id: "rev-HUMAN_FILL_16HEX"
+      legal_name: "HUMAN_FILL"
+      preferred_credential_string: "HUMAN_FILL"
+      role: medical-director
+      institution: "HUMAN_FILL"
+      identity_proof:
+        ial: IAL3
+        aal: AAL3
+        proofing_method: "HUMAN_FILL"
+        proofing_evidence_uri: "https://HUMAN_FILL/director-proof"
+        proofed_at: "HUMAN_FILL_ISO_DATETIME"
+        proofed_by_org: "HUMAN_FILL"
+        proofed_by_person: null
+      credentials:
+        - kind: medical-director
+          issuer: "HUMAN_FILL"
+          evidence_uri: "https://HUMAN_FILL/director-credential"
+          valid_from: "HUMAN_FILL_ISO_DATE"
+          valid_until: null
+          verified_at: "HUMAN_FILL_ISO_DATETIME"
+          verified_by: "HUMAN_FILL"
+      coi_disclosures:
+        - kind: none
+          counterparty: null
+          scope: none
+          scope_detail: null
+          disclosed_at: "HUMAN_FILL_ISO_DATETIME"
+          mitigation: null
+          auto_disqualifies_safety_case: false
+      public_key:
+        algorithm: Ed25519
+        key_id: "HUMAN_FILL"
+        key_pem: "HUMAN_FILL"
+        fingerprint_sha256: "HUMAN_FILL_64HEX"
+      assigned_at: "HUMAN_FILL_ISO_DATETIME"
+
+    state: signed
+
+    signature:
+      algorithm: Ed25519
+      key_id: "HUMAN_FILL"
+      payload_canonical_form: json-canonical-rfc8785
+      payload_sha256: "HUMAN_FILL_64HEX"
+      signature_b64: "HUMAN_FILL_BASE64"
+      time_stamp:
+        tsa_name: "HUMAN_FILL"
+        tsa_url: "https://HUMAN_FILL/tsa"
+        tsa_cert_fingerprint_sha256: "HUMAN_FILL_64HEX"
+        time: "HUMAN_FILL_ISO_DATETIME"
+        token_b64: "HUMAN_FILL_BASE64"
+      verifies: true
+
+    audit_log:
+      - { event_id: "evt-HUMAN_FILL_16HEX", occurred_at: "HUMAN_FILL_ISO_DATETIME", kind: safety-case-drafted,        actor_id: "HUMAN_FILL", payload_sha256: "HUMAN_FILL_64HEX", prov_activity_id: "HUMAN_FILL" }
+      - { event_id: "evt-HUMAN_FILL_16HEX", occurred_at: "HUMAN_FILL_ISO_DATETIME", kind: hazard-mitigation-verified, actor_id: "HUMAN_FILL", payload_sha256: "HUMAN_FILL_64HEX", prov_activity_id: "HUMAN_FILL" }
+      - { event_id: "evt-HUMAN_FILL_16HEX", occurred_at: "HUMAN_FILL_ISO_DATETIME", kind: risk-matrix-computed,       actor_id: "HUMAN_FILL", payload_sha256: "HUMAN_FILL_64HEX", prov_activity_id: "HUMAN_FILL" }
+      - { event_id: "evt-HUMAN_FILL_16HEX", occurred_at: "HUMAN_FILL_ISO_DATETIME", kind: residual-risk-recorded,     actor_id: "HUMAN_FILL", payload_sha256: "HUMAN_FILL_64HEX", prov_activity_id: "HUMAN_FILL" }
+      - { event_id: "evt-HUMAN_FILL_16HEX", occurred_at: "HUMAN_FILL_ISO_DATETIME", kind: safety-case-signed,         actor_id: "rev-HUMAN_FILL_16HEX", payload_sha256: "HUMAN_FILL_64HEX", prov_activity_id: "HUMAN_FILL" }
+
+    fixity:
+      safety_case_sha256: "HUMAN_FILL_64HEX"
+      computed_at: "HUMAN_FILL_ISO_DATETIME"
+      canonical_form: json-canonical-rfc8785
+
+# =============================================================================
+# 7. CHANGE CONTROL
+# -----------------------------------------------------------------------------
+# Any change to this schema (closed enums, policy clauses, validation
+# rules, invariants, the mitigation-kind constraint matrix, the Severity
+# × Likelihood matrix, or example fixtures) requires:
+#   - A change-controlled diff with regression evaluation against the
+#     golden Safety Case set.
+#   - Panel-chair signoff AND medical-director acknowledgement (since
+#     this schema directly governs the safety attestation surface).
+#   - Increment of `schema_version` (semver: breaking = major).
+#   - Update of `last_reviewed`.
+#   - Coordinated update of every producing/consuming skill's tools_lock
+#     reference and acceptance-test fixtures.
+#   - Any change to: closed_hazard_set; source_anchored_basis;
+#     closed_grading_inheritance; mitigation_kind_constraint_matrix;
+#     pregnancy_hard_block; pce_legacy_never_propagates;
+#     closed_severity_likelihood_matrix; acceptable_residual_risk_ceiling;
+#     mitigation_verification; cohort_axis_attestations;
+#     signer_identity; signature_algorithm; time_stamping;
+#     post_signoff_immutability; or predecessor_chain requires ALSO an
+#     ADR-HTN-001 amendment with documented rationale and a new
+#     medical-director signoff.
+# =============================================================================
+
+change_control:
+  semver: true
+  golden_set_regression_required: true
+  panel_chair_signoff_required: true
+  medical_director_acknowledgement_required: true
+  parent_schemas_to_update_on_breaking_change:
+    - cpg-htn-2025-acc-aha/schemas/recommendation-record-htn.yaml
+    - cpg-htn-2025-acc-aha/schemas/atomic-unit.yaml
+    - cpg-htn-2025-acc-aha/schemas/sair.yaml
+    - cpg-htn-2025-acc-aha/schemas/gate1-register.yaml
+    - cpg-htn-2025-acc-aha/schemas/gate2-register.yaml
+    - cpg-htn-2025-acc-aha/schemas/gate3-attestation.yaml
+    - cpg-htn-2025-acc-aha/schemas/guideline-manifest-hbp-2025.yaml
+  parent_skills_to_update_on_breaking_change:
+    - cpg-htn-2025-acc-aha/skills/safety-hbp
+    - cpg-htn-2025-acc-aha/skills/safety-case-attest
+    - cpg-htn-2025-acc-aha/skills/flow-hbp-2025-build
+    - cpg-htn-2025-acc-aha/skills/cds-hooks-package-htn
+    - cpg-htn-2025-acc-aha/skills/cql-clinician-signoff
+    - cpg-htn-2025-acc-aha/skills/guideline-docs
+    - cpg-htn-2025-acc-aha/skills/guideline-version
+  adr_amendment_required_for_policy_changes:
+    closed_hazard_set: true
+    source_anchored_basis: true
+    closed_grading_inheritance: true
+    mitigation_kind_constraint_matrix: true
+    pregnancy_hard_block: true
+    pce_legacy_never_propagates: true
+    closed_severity_likelihood_matrix: true
+    acceptable_residual_risk_ceiling: true
+    mitigation_verification: true
+    cohort_axis_attestations: true
+    signer_identity: true
+    signature_algorithm: true
+    time_stamping: true
+    post_signoff_immutability: true
+    predecessor_chain: true
+    adr_to_amend: ADR-HTN-001 D5, D8, D9, D10, D14, D15

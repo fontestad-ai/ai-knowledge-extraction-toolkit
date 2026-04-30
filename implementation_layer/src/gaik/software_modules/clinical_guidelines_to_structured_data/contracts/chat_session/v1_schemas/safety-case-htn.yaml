@@ -1,0 +1,1675 @@
+# =============================================================================
+# safety-case-htn.yaml
+# -----------------------------------------------------------------------------
+# Standalone schema for the Safety Case — the ISO 14971-shaped hazard log,
+# risk evaluation, and residual-risk justification document produced by
+# `safety-hbp` at Phase 23 (P23) and consumed as the `safe` member of the
+# Gate-3 bundle by `safety-case-attest`.
+#
+# This file is the contract for:
+#   - Safety Case identity (id, version, predecessor chain, build binding,
+#     manifest binding).
+#   - Intended-use scope (verbatim from manifest; age gate; in-scope and
+#     out-of-scope populations; acceptable residual-risk ceiling).
+#   - The closed hazard set H-01..H-10 (per framework spec §8 and ADR-HTN-001
+#     D8/D9/D10/D14/D15) with per-hazard:
+#       * source-anchored basis (RecommendationRecord ids + AtomicUnit ids,
+#         or pipeline-control PROV evidence for pipeline-integrity hazards),
+#       * closed COR/LOE inheritance (from acc-aha-grading.yaml),
+#       * pre-mitigation risk under the closed Severity × Likelihood matrix,
+#       * mitigations under the closed mitigation-kind constraint matrix
+#         (CQL Library / CDS Hooks service / pipeline control / documentation),
+#       * post-mitigation risk under the same closed matrix,
+#       * residual-risk justification with explicit out-of-scope assertions.
+#   - Cohort-axis attestations (no-relax-of-hard-block, PCE-legacy-never-
+#     propagates, pregnancy-order-select-hard-refuse, errata-watch,
+#     source-admission, ISO-14971 compliance).
+#   - Cryptographic signature envelope (Ed25519 / ECDSA-P256-SHA256 over
+#     RFC 8785 JCS canonical payload, RFC 3161 time-stamp).
+#   - Audit log (append-only).
+#   - Fixity (RFC 8785 SHA-256 of the canonical document with `fixity`
+#     and `signature` excluded).
+#
+# Posture: caution over velocity, fidelity over coverage, residual-risk
+# over claimed-risk. The closed hazard set is mechanically closed; the
+# closed mitigation-kind constraint matrix mechanically binds every hazard
+# to one or more verifiable mitigations; the closed Severity × Likelihood
+# matrix is non-negotiable; the closed `acceptable_residual_risk_max` enum
+# pins the framework's risk-acceptability ceiling at `medium` by default.
+# Pregnancy hard-block must remain `order-select` hard refusal — no soft
+# warning. PCE-legacy never substitutes for PREVENT.
+#
+# This file does NOT contain mitigation source code, CQL Library bytes,
+# or CDS Hooks service descriptors. It records WHO authored WHICH safety
+# evaluation at WHAT bundle hash and WHEN, with explicit verification
+# pointers to upstream artifacts. Verification is performed by `safety-hbp`
+# at sign time and re-verified by `safety-case-attest` as part of the
+# Gate-3 bundle integrity check.
+#
+# Authority:
+#   - ADR-HTN-001 D5 (PREVENT canonical risk function)
+#   - ADR-HTN-001 D8 (pregnancy hard-block enforced at order-select)
+#   - ADR-HTN-001 D9 (three non-overridable human gates; the Safety Case
+#     is the safety-attestation surface that Gate 3 inherits)
+#   - ADR-HTN-001 D10 (PHI fail-closed; H-08 mitigations include the PHI
+#     scrub control; H-08 is the LLM-hallucinated-recommendation hazard,
+#     mitigated by triple-modal consensus + Gate 1 SME signoff +
+#     citation-anchor preservation)
+#   - ADR-HTN-001 D14 (supersession of 2017; H-10 mitigations cite the
+#     errata-watch and the no-auto-update rule)
+#   - ADR-HTN-001 D15 (drift detection; H-09 / H-10 cite errata-watch)
+#   - Framework spec §8 (hazards H-01..H-10)
+#   - Framework spec §11 (Safety Case structure under ISO 14971)
+#   - `safety-hbp` SKILL.md (the only authorized writer)
+#   - Parent framework rules: `god-session`, `human-authorization`,
+#     `native-ux-tools`
+#
+# Relationship to neighboring schemas (separate files, referenced by $ref
+# or by content-hash pointer):
+#   - schemas/recommendation-record-htn.yaml  (per-hazard `basis.source_anchors[]`
+#                                              cite RecommendationRecord ids)
+#   - schemas/atomic-unit.yaml                (per-hazard `basis.source_anchors[]`
+#                                              cite AtomicUnit ids)
+#   - schemas/sair.yaml                       (referenced for source anchors
+#                                              the reviewer may navigate to as
+#                                              context)
+#   - schemas/acc-aha-grading.yaml            (closed COR/LOE enums for
+#                                              `basis.cor` and `basis.loe`)
+#   - schemas/gate1-register.yaml             (Gate 1 finalization is a
+#                                              precondition for Safety Case
+#                                              authoring; the Safety Case
+#                                              cites the relevant cohort ids)
+#   - schemas/gate2-register.yaml             (Gate 2 finalization is a
+#                                              precondition; the Safety Case
+#                                              cites Library hard-block
+#                                              invariant kinds and verifying
+#                                              reference test ids)
+#   - schemas/gate3-attestation.yaml          (downstream consumer; the
+#                                              signed Safety Case is the `safe`
+#                                              bundle member at Gate 3)
+#   - schemas/guideline-manifest-hbp-2025.yaml (per-build manifest; intended
+#                                              use, tsa_list, signature_policy,
+#                                              terminology, risk_engine,
+#                                              quote envelope, errata_watch,
+#                                              and `acceptable_residual_risk_max`
+#                                              are consulted)
+# =============================================================================
+
+$schema: "https://json-schema.org/draft/2020-12/schema"
+$id: "https://aiwg.io/cpg-htn-2025-acc-aha/schemas/safety-case-htn.yaml"
+title: "SafetyCaseHTN"
+description: >
+  Auditable, signed, append-only ISO 14971-shaped Safety Case document
+  for a build derived from the cpg-htn-2025-acc-aha framework. Covers
+  the closed hazard set H-01..H-10, wires every hazard to mitigations
+  under the closed mitigation-kind constraint matrix, computes
+  pre-mitigation and post-mitigation risk under the closed Severity ×
+  Likelihood matrix, produces per-hazard residual-risk justification,
+  and binds the document cryptographically to a manifest-pinned TSA.
+  Post-signoff content is immutable; corrections require a new Safety
+  Case version with explicit predecessor chain.
+version: "1.0.0"
+schema_lifecycle: stable
+last_reviewed: "HUMAN_FILL: ISO-8601 date of most recent panel review of this schema"
+authority:
+  adr: ADR-HTN-001
+  framework: cpg-htn-2025-acc-aha
+  parent_framework: aiwg-training
+license: MIT
+
+# -----------------------------------------------------------------------------
+# 1. POLICY (normative)
+# -----------------------------------------------------------------------------
+
+policy:
+
+  closed_hazard_set:
+    rule: >
+      The Safety Case MUST cover exactly the ten hazards H-01..H-10
+      enumerated in §2.1, each appearing exactly once. No hazard may
+      be added, removed, renamed, or reordered at this schema's level.
+      Institutional extensions go to a separate `extensions[]` block
+      whose presence is explicitly opted in by the manifest's
+      `safety_extensions_authorized == true` (default false).
+      Validators MUST refuse documents missing any of H-01..H-10 or
+      containing duplicates.
+
+  source_anchored_basis:
+    rule: >
+      Every clinical hazard (H-01..H-07) MUST cite at least one
+      `RecommendationRecord` id and at least one `AtomicUnit` id from
+      the build's records and atomic units. Every pipeline-integrity
+      hazard (H-08..H-10) MUST cite at least one pipeline control
+      with PROV-bundle evidence. Anchors that do not resolve at
+      validation time are a release blocker.
+
+  closed_grading_inheritance:
+    rule: >
+      `basis.cor` and `basis.loe` MUST be members of the closed enums
+      in `acc-aha-grading.yaml` (`AccAhaCOR`, `AccAhaLOE`). For
+      pipeline-integrity hazards, `basis.cor` is set to the
+      most-restrictive grade among the records the hazard surfaces
+      over and `basis.cor_inheritance_kind == "derived-most-restrictive"`
+      is recorded explicitly to distinguish derived from native
+      grading.
+
+  mitigation_kind_constraint_matrix:
+    rule: >
+      Every hazard MUST satisfy the per-hazard mitigation-kind
+      constraint matrix in §2.4. The matrix is closed; the schema
+      enumerates required mitigation kinds per hazard. Validators MUST
+      enforce both the kind and the per-mitigation parameter
+      constraints (e.g., H-01 requires a CDS Hooks service mitigation
+      whose hook type is `order-select` and posture is `hard-refuse`).
+
+  pregnancy_hard_block:
+    rule: >
+      H-01 MUST mitigate via `htn-pregnancy-denylist` wired as
+      `order-select` with hard-refusal posture, and via the
+      `PregnancyHTN` Library asserting the
+      `pregnancy-denylist-order-select-hard-refuse` invariant
+      verified by a passing reference test. No soft-warning posture is
+      permitted under any circumstance. No attending-override branch
+      is permitted in any cited Library binding. Validators MUST
+      detect any soft-warning posture or attending-override branch
+      and BLOCK the build.
+
+  pce_legacy_never_propagates:
+    rule: >
+      No mitigation referencing a CQL Library may carry a
+      `bound_risk_engine.name == "PCE-legacy"` or
+      `bound_risk_engine.legacy_only == true`. PREVENT is canonical
+      per ADR-HTN-001 D5; any PCE-legacy reference is a release
+      blocker.
+
+  closed_severity_likelihood_matrix:
+    rule: >
+      The Severity × Likelihood matrix in §2.6 is closed. The
+      reviewer cannot adjust matrix outputs. Severity is rarely
+      affected by mitigations (a hyperkalemia event remains a serious
+      clinical event whether mitigated or not); mitigations primarily
+      reduce likelihood. When severity changes between pre- and
+      post-mitigation, an explicit narrative justification is
+      required and validators MUST refuse the change without it.
+
+  acceptable_residual_risk_ceiling:
+    rule: >
+      The Safety Case's `acceptable_residual_risk_max` is a closed
+      enum (low | medium | high | extreme), default `medium`. The
+      manifest may pin a stricter ceiling (e.g., `low`); a manifest
+      ceiling stricter than the Safety Case's recorded value is a
+      release blocker. Every hazard's `post_mitigation_risk.combined`
+      MUST be at or below the effective ceiling. The Safety Case does
+      NOT declare residual risk away when post-mitigation risk
+      exceeds the ceiling; remediation is upstream re-author of the
+      Library or CDS Hooks service.
+
+  mitigation_verification:
+    rule: >
+      Every mitigation reference MUST verify at sign time:
+        - cql-library: the named Library exists in the build, has
+          Gate-2-finalized signoff, the declared
+          `hard_block_invariant_kind` is in the Library's
+          `hard_block_invariants[]`, and the verifying reference test
+          passes.
+        - cds-hooks-service: the named service descriptor exists,
+          its hook type and posture match the constraint, and (for
+          H-01) attending-override semantics are absent.
+        - pipeline-control: the named control kind is in the closed
+          enum and the build's PROV bundle records evidence of the
+          control's presence.
+        - documentation: the named artifact exists and the named
+          section is non-empty.
+      Producer claims of `verifies: true` are not trusted; validators
+      recompute every verification.
+
+  cohort_axis_attestations:
+    rule: >
+      A signed Safety Case MUST carry the closed set of cohort-axis
+      attestations in §3.10, all set to `true`. Missing or `false`
+      attestations are a release blocker.
+
+  signer_identity:
+    rule: >
+      The Safety Case is signed by a named individual at NIST SP
+      800-63 IAL2/AAL2 minimum (institutional policy may pin higher;
+      framework default is the medical director or a hypertension
+      specialist designated by the panel chair). The signer's role
+      is recorded; auto-disqualifying COI rewrites the signing flow
+      to a substitute appointment.
+
+  signature_algorithm:
+    rule: >
+      Signatures use Ed25519 (default) or ECDSA-P256-SHA256 over the
+      canonical JCS (RFC 8785) form of the signed payload. The
+      algorithm and key id are pinned per Safety Case; mismatch is a
+      release blocker.
+
+  time_stamping:
+    rule: >
+      The signature carries an RFC 3161 time-stamp from a TSA pinned
+      in the active manifest's `tsa_list[]` whose certificate
+      validity covers `signed_at`. Time-stamp absence is a release
+      blocker.
+
+  post_signoff_immutability:
+    rule: >
+      Once a Safety Case is recorded with `state == "signed"` and
+      `signature.verifies == true`, neither its `signature` nor any
+      hazard, mitigation, risk-matrix, or residual-risk-justification
+      content may be mutated. Corrections require a new Safety Case
+      version with `predecessor_safety_case_id` referring to the
+      superseded one. The old Safety Case is retained immutably for
+      audit.
+
+  predecessor_chain:
+    rule: >
+      `predecessor_safety_case_id` MUST be set whenever this Safety
+      Case supersedes a prior one. The predecessor's state MUST be
+      `superseded` or `withdrawn`. The chain is monotone; cycles are
+      forbidden.
+
+# -----------------------------------------------------------------------------
+# 2. CLOSED ENUMERATIONS AND CONSTRAINT MATRICES
+# -----------------------------------------------------------------------------
+
+$defs:
+
+  # ---------------------------------------------------------------------------
+  # 2.1 Closed hazard ids (H-01..H-10)
+  # ---------------------------------------------------------------------------
+  HazardId:
+    type: string
+    enum:
+      - H-01
+      - H-02
+      - H-03
+      - H-04
+      - H-05
+      - H-06
+      - H-07
+      - H-08
+      - H-09
+      - H-10
+
+  # ---------------------------------------------------------------------------
+  # 2.2 Hazard categories
+  # ---------------------------------------------------------------------------
+  HazardCategory:
+    type: string
+    enum:
+      - drug-population
+      - drug-drug
+      - drug-drug-population
+      - drug-protocol
+      - workup-omission
+      - measurement-protocol
+      - pipeline-integrity
+
+  # ---------------------------------------------------------------------------
+  # 2.3 Mitigation kinds
+  # ---------------------------------------------------------------------------
+  MitigationKind:
+    type: string
+    enum:
+      - cql-library
+      - cds-hooks-service
+      - pipeline-control
+      - documentation
+
+  # ---------------------------------------------------------------------------
+  # 2.4 Mitigation-kind constraint matrix (closed, per HazardId)
+  # ---------------------------------------------------------------------------
+  # The matrix is consulted by validators at write/sign time. Each entry
+  # lists the REQUIRED mitigation kinds and per-kind parameters. A hazard
+  # whose mitigations[] does not satisfy the corresponding row is a
+  # release blocker.
+  #
+  # The matrix below is documentation embedded in the schema. The validator
+  # MUST honor it as ground truth, supplementing the structural JSON
+  # Schema with the per-hazard parameter constraints noted in `notes`.
+  # ---------------------------------------------------------------------------
+  MitigationConstraintMatrix:
+    description: |
+      H-01 (RAAS / MRA / direct-renin in pregnancy):
+        - REQUIRED cql-library: name="PregnancyHTN", invariant_kind="pregnancy-denylist-order-select-hard-refuse"
+        - REQUIRED cds-hooks-service: id="htn-pregnancy-denylist", hook="order-select", posture="hard-refuse"
+        - notes: "No soft-warning posture; no attending-override branch."
+
+      H-02 (Triple-whammy AKI):
+        - REQUIRED cql-library: name in {"FirstLineSelection", "SpecialPopulationModifiers"}, invariant_kind="aki-triple-whammy-warning"
+        - REQUIRED cds-hooks-service: id="htn-pharm-first-line-check"
+
+      H-03 (Hyperkalemia on ACEi+ARB+MRA):
+        - REQUIRED cql-library: name in {"FirstLineSelection", "SpecialPopulationModifiers"}, invariant_kind="hyperkalemia-aceiarb-mra-warning"
+        - REQUIRED cds-hooks-service: id="htn-pharm-first-line-check"
+
+      H-04 (Older-adult orthostasis / falls):
+        - REQUIRED cql-library: name="SpecialPopulationModifiers", invariant_kind="older-adult-orthostasis-monitoring"
+        - REQUIRED cds-hooks-service: id="htn-pharm-first-line-check"
+
+      H-05 (Beta-blocker rebound):
+        - REQUIRED cql-library: name="SpecialPopulationModifiers", invariant_kind="beta-blocker-no-abrupt-discontinuation"
+        - REQUIRED documentation: artifact="guideline-card", section="protocolized-taper"
+
+      H-06 (Missed primary aldosteronism):
+        - REQUIRED cql-library: name="ResistantHTN", invariant_kind="aldosteronism-screen-resistant"
+        - REQUIRED cds-hooks-service: id="htn-resistant-workup"
+
+      H-07 (In-office-only diagnosis):
+        - REQUIRED cql-library: name="HBPStaging", invariant_kind="bp-confirmation-out-of-office"
+        - REQUIRED cds-hooks-service: id="htn-bp-stage-and-confirm"
+        - REQUIRED cds-hooks-service: id="htn-hbpm-discharge"
+
+      H-08 (LLM-hallucinated recommendation):
+        - REQUIRED pipeline-control: kind="gate1-register-immutability"
+        - REQUIRED pipeline-control: kind="parse-acc-aha-recbox-cell-shape-compliance"
+        - REQUIRED pipeline-control: kind="extract-recommendation-cor-loe-triple-modal"
+        - REQUIRED pipeline-control: kind="safety-case-attest-bundle-hash"
+
+      H-09 (Terminology drift):
+        - REQUIRED pipeline-control: kind="manifest-terminology-edition-pin"
+        - REQUIRED pipeline-control: kind="manifest-no-auto-update"
+        - REQUIRED documentation: artifact="retraction-notice", section="terminology-drift"
+
+      H-10 (Source guideline updated / erratum):
+        - REQUIRED pipeline-control: kind="acquire-hbp-2025-source-errata-watch"
+        - REQUIRED pipeline-control: kind="manifest-no-auto-update"
+        - REQUIRED pipeline-control: kind="gate3-attestation-decline-on-errata-blocker"
+        - REQUIRED documentation: artifact="retraction-notice", section="source-guideline-update"
+
+  # ---------------------------------------------------------------------------
+  # 2.5 Pipeline-control kinds (closed)
+  # ---------------------------------------------------------------------------
+  PipelineControlKind:
+    type: string
+    enum:
+      - gate1-register-immutability
+      - gate2-register-immutability
+      - gate3-attestation-bundle-hash
+      - gate3-attestation-decline-on-errata-blocker
+      - parse-acc-aha-recbox-cell-shape-compliance
+      - parse-acc-aha-recbox-text-insertion-detection
+      - extract-recommendation-cor-loe-triple-modal
+      - extract-recommendation-cor-loe-family-distinct-llm
+      - bind-htn-vocab-edition-pin
+      - cql-test-synthea-htn-coverage-floor
+      - safety-case-attest-bundle-hash
+      - manifest-terminology-edition-pin
+      - manifest-no-auto-update
+      - manifest-source-admission
+      - acquire-hbp-2025-source-errata-watch
+      - acquire-hbp-2025-source-tls-pin
+      - phi-scrub-zero-hits
+      - copyright-quote-envelope
+      - sair-write-back-lock
+      - records-content-hash-recompute
+      - atomic-units-deterministic-id
+
+  # ---------------------------------------------------------------------------
+  # 2.6 Severity × Likelihood matrix (closed)
+  # ---------------------------------------------------------------------------
+  Severity:
+    type: string
+    enum: [minor, major, serious, catastrophic]
+
+  Likelihood:
+    type: string
+    enum: [rare, occasional, probable, frequent]
+
+  RiskCombined:
+    type: string
+    enum: [low, medium, high, extreme]
+
+  SeverityLikelihoodMatrix:
+    description: |
+      Closed mapping. Validators MUST compute `combined` from
+      `(severity, likelihood)` per the table:
+
+        Severity \ Likelihood | rare       | occasional | probable | frequent
+        ----------------------+------------+------------+----------+----------
+        minor                 | low        | low        | medium   | medium
+        major                 | low        | medium     | high     | high
+        serious               | medium     | high       | high     | extreme
+        catastrophic          | high       | high       | extreme  | extreme
+
+      Reviewer overrides of `combined` are forbidden. When severity
+      changes between pre- and post-mitigation, an explicit narrative
+      justification is required (see §3.6).
+
+  # ---------------------------------------------------------------------------
+  # 2.7 Acceptable residual risk ceiling (closed)
+  # ---------------------------------------------------------------------------
+  AcceptableResidualRiskMax:
+    type: string
+    enum: [low, medium, high, extreme]
+    default: medium
+    description: >
+      The Safety Case's risk-acceptability ceiling. The manifest may
+      pin a stricter ceiling; the effective ceiling is the stricter of
+      the two. Every hazard's `post_mitigation_risk.combined` MUST be
+      at or below the effective ceiling.
+
+  # ---------------------------------------------------------------------------
+  # 2.8 Hard-block invariant kinds (mirrored from gate2-register.yaml)
+  # ---------------------------------------------------------------------------
+  HardBlockInvariantKind:
+    type: string
+    enum:
+      - pregnancy-denylist-order-select-hard-refuse
+      - pregnancy-firstline-restricted
+      - pce-legacy-never-feeds-cql
+      - prevent-canonical-binding
+      - age-gate-ge-18
+      - aki-triple-whammy-warning
+      - hyperkalemia-aceiarb-mra-warning
+      - beta-blocker-no-abrupt-discontinuation
+      - older-adult-orthostasis-monitoring
+      - aldosteronism-screen-resistant
+      - bp-confirmation-out-of-office
+
+  # ---------------------------------------------------------------------------
+  # 2.9 CDS Hooks ids (closed; mirrored from framework spec §7)
+  # ---------------------------------------------------------------------------
+  CdsHooksServiceId:
+    type: string
+    enum:
+      - htn-bp-stage-and-confirm
+      - htn-prevent-risk-and-threshold
+      - htn-pharm-first-line-check
+      - htn-pregnancy-denylist
+      - htn-resistant-workup
+      - htn-secondary-screen
+      - htn-hbpm-discharge
+
+  CdsHooksHookType:
+    type: string
+    enum:
+      - order-select
+      - order-sign
+      - medication-prescribe
+      - patient-view
+      - encounter-discharge
+
+  CdsHooksPosture:
+    type: string
+    enum:
+      - hard-refuse
+      - soft-warning   # accepted only on hazards where soft warning is permitted; H-01 forbids this
+      - informational
+
+  # ---------------------------------------------------------------------------
+  # 2.10 Library names (closed; mirrored from gate2-register.yaml)
+  # ---------------------------------------------------------------------------
+  LibraryName:
+    type: string
+    enum:
+      - HBPStaging
+      - PreventRisk
+      - TreatmentThreshold
+      - FirstLineSelection
+      - SpecialPopulationModifiers
+      - PregnancyHTN
+      - ResistantHTN
+      - SecondaryHTNTriggers
+      - HypertensiveUrgencyEmergency
+
+  # ---------------------------------------------------------------------------
+  # 2.11 Documentation artifacts (closed)
+  # ---------------------------------------------------------------------------
+  DocumentationArtifactId:
+    type: string
+    enum:
+      - guideline-card
+      - cgat-matrix
+      - regulatory-traceability
+      - retraction-notice
+
+  # ---------------------------------------------------------------------------
+  # 2.12 Identity / signature primitives
+  # ---------------------------------------------------------------------------
+  IdentityAssuranceLevel:
+    type: string
+    enum: [IAL1, IAL2, IAL3]
+
+  AuthenticatorAssuranceLevel:
+    type: string
+    enum: [AAL1, AAL2, AAL3]
+
+  SignatureAlgorithm:
+    type: string
+    enum:
+      - Ed25519
+      - ECDSA-P256-SHA256
+
+  COIKind:
+    type: string
+    enum:
+      - none
+      - financial-pharmaceutical
+      - financial-device
+      - research-grant
+      - speakers-bureau
+      - consultancy
+      - equity-holding
+      - employment-related
+      - family-relationship
+      - publication-author
+      - guideline-author
+      - other
+
+  # ---------------------------------------------------------------------------
+  # 2.13 Safety Case lifecycle
+  # ---------------------------------------------------------------------------
+  SafetyCaseState:
+    type: string
+    enum:
+      - draft
+      - awaiting-time-stamp
+      - signed
+      - superseded
+      - withdrawn
+
+  # ---------------------------------------------------------------------------
+  # 2.14 Audit-event kinds
+  # ---------------------------------------------------------------------------
+  AuditEventKind:
+    type: string
+    enum:
+      - safety-case-drafted
+      - hazard-authored
+      - hazard-mitigation-verified
+      - hazard-mitigation-verification-failed
+      - risk-matrix-computed
+      - residual-risk-recorded
+      - safety-case-signed
+      - safety-case-superseded
+      - safety-case-withdrawn
+      - pregnancy-denylist-soft-warning-detected
+      - pce-legacy-binding-detected
+      - hazard-set-tamper-attempt
+      - safety-case-mutation-attempt
+
+# -----------------------------------------------------------------------------
+# 3. STRUCTURED TYPES
+# -----------------------------------------------------------------------------
+
+  # ---------------------------------------------------------------------------
+  # 3.1 SourceAnchor — pointer into records / atomic-units (or pipeline)
+  # ---------------------------------------------------------------------------
+  SourceAnchor:
+    type: object
+    additionalProperties: false
+    required: [anchor_kind]
+    properties:
+      anchor_kind:
+        type: string
+        enum:
+          - cor-iii-harm-anchor
+          - cor-iii-no-benefit-anchor
+          - explicit-should-not-anchor
+          - explicit-not-recommended-anchor
+          - manifest-pin-prevent
+          - manifest-intended-use-age
+          - safety-hazard-mitigation
+          - pipeline-control-prov-evidence
+      record_id:
+        type: [string, "null"]
+        pattern: "^rec-[0-9a-f]{16}$|^null$"
+      atomic_unit_id:
+        type: [string, "null"]
+        pattern: "^au-[0-9a-f]{16}$|^null$"
+      sair_anchor:
+        type: [object, "null"]
+        additionalProperties: false
+        required: [page, bbox, sair_sha256]
+        properties:
+          page:        { type: integer, minimum: 1 }
+          bbox:
+            type: object
+            additionalProperties: false
+            required: [x0, y0, x1, y1]
+            properties:
+              x0: { type: number }
+              y0: { type: number }
+              x1: { type: number }
+              y1: { type: number }
+          sair_sha256: { type: string, pattern: "^[0-9a-f]{64}$" }
+      pipeline_control_evidence:
+        type: [object, "null"]
+        additionalProperties: false
+        required: [control_kind, prov_activity_id]
+        properties:
+          control_kind:     { $ref: "#/$defs/PipelineControlKind" }
+          prov_activity_id: { type: string, minLength: 1 }
+          prov_bundle_uri:  { type: [string, "null"], format: uri }
+
+  # ---------------------------------------------------------------------------
+  # 3.2 Basis — closed COR/LOE inheritance + source-anchored evidence
+  # ---------------------------------------------------------------------------
+  Basis:
+    type: object
+    additionalProperties: false
+    required: [cor, loe, cor_inheritance_kind, source_anchors]
+    properties:
+      cor:
+        type: string
+        enum: [I, IIa, IIb, III-No-Benefit, III-Harm]
+      loe:
+        type: string
+        enum: [A, B-R, B-NR, C-LD, C-EO]
+      cor_inheritance_kind:
+        type: string
+        enum: [native, derived-most-restrictive]
+        description: >
+          `native` = COR/LOE inherited directly from a single record's
+          ACC/AHA grading. `derived-most-restrictive` = computed for
+          pipeline-integrity hazards over the records the hazard
+          surfaces over.
+      source_anchors:
+        type: array
+        minItems: 1
+        items: { $ref: "#/$defs/SourceAnchor" }
+
+  # ---------------------------------------------------------------------------
+  # 3.3 Risk — combined under the closed Severity × Likelihood matrix
+  # ---------------------------------------------------------------------------
+  Risk:
+    type: object
+    additionalProperties: false
+    required: [severity, likelihood, combined]
+    properties:
+      severity:   { $ref: "#/$defs/Severity" }
+      likelihood: { $ref: "#/$defs/Likelihood" }
+      combined:   { $ref: "#/$defs/RiskCombined" }
+      severity_change_justification:
+        type: [string, "null"]
+        description: >
+          Required when `severity` differs between pre- and
+          post-mitigation Risk on the same hazard. Validators MUST
+          enforce this on the parent Hazard.
+
+  # ---------------------------------------------------------------------------
+  # 3.4 Mitigation — verified at sign time
+  # ---------------------------------------------------------------------------
+  MitigationCqlLibraryTarget:
+    type: object
+    additionalProperties: false
+    required: [library_id, library_name, hard_block_invariant_kind]
+    properties:
+      library_id:
+        type: string
+        pattern: "^lib-[0-9a-f]{16}$"
+      library_name:               { $ref: "#/$defs/LibraryName" }
+      hard_block_invariant_kind:  { $ref: "#/$defs/HardBlockInvariantKind" }
+      gate2_register_path:        { type: string }
+      gate2_register_sha256:      { type: string, pattern: "^[0-9a-f]{64}$" }
+
+  MitigationCdsHooksServiceTarget:
+    type: object
+    additionalProperties: false
+    required: [service_id, hook, posture]
+    properties:
+      service_id:               { $ref: "#/$defs/CdsHooksServiceId" }
+      hook:                     { $ref: "#/$defs/CdsHooksHookType" }
+      posture:                  { $ref: "#/$defs/CdsHooksPosture" }
+      service_descriptor_path:  { type: [string, "null"] }
+      service_descriptor_sha256:{ type: [string, "null"], pattern: "^[0-9a-f]{64}$|^null$" }
+
+  MitigationPipelineControlTarget:
+    type: object
+    additionalProperties: false
+    required: [control_kind]
+    properties:
+      control_kind:        { $ref: "#/$defs/PipelineControlKind" }
+      prov_activity_id:    { type: [string, "null"] }
+      prov_bundle_uri:     { type: [string, "null"], format: uri }
+
+  MitigationDocumentationTarget:
+    type: object
+    additionalProperties: false
+    required: [artifact, section]
+    properties:
+      artifact:        { $ref: "#/$defs/DocumentationArtifactId" }
+      section:
+        type: string
+        minLength: 1
+      artifact_path:   { type: [string, "null"] }
+      artifact_sha256: { type: [string, "null"], pattern: "^[0-9a-f]{64}$|^null$" }
+
+  Mitigation:
+    type: object
+    additionalProperties: false
+    required: [mitigation_id, kind, rationale, verification]
+    properties:
+      mitigation_id:
+        type: string
+        pattern: "^mit-[0-9a-f]{16}$"
+      kind: { $ref: "#/$defs/MitigationKind" }
+      target:
+        oneOf:
+          - $ref: "#/$defs/MitigationCqlLibraryTarget"
+          - $ref: "#/$defs/MitigationCdsHooksServiceTarget"
+          - $ref: "#/$defs/MitigationPipelineControlTarget"
+          - $ref: "#/$defs/MitigationDocumentationTarget"
+      asserts_invariant_kind:
+        oneOf:
+          - $ref: "#/$defs/HardBlockInvariantKind"
+          - type: "null"
+      rationale:
+        type: string
+        minLength: 1
+      verification:
+        type: object
+        additionalProperties: false
+        required: [verifies, verified_at]
+        properties:
+          verifies:
+            type: boolean
+            description: >
+              Recomputed at sign time by `safety-hbp` and re-verified
+              at Gate 3 by `safety-case-attest`. Producer claims of
+              `true` are not trusted.
+          verified_by_reference_test_id:
+            type: [string, "null"]
+            description: >
+              Required for cql-library and cds-hooks-service mitigations.
+              Resolves to a reference test id whose status is `pass` in
+              the corresponding Library's reference-test pack.
+          verified_by_prov_activity_id:
+            type: [string, "null"]
+            description: >
+              Required for pipeline-control mitigations. Resolves to a
+              PROV activity id in the build's PROV bundle.
+          verified_at: { type: string, format: date-time }
+          verification_method:
+            type: string
+            enum:
+              - reference-test-pack-pass
+              - prov-bundle-evidence
+              - artifact-section-non-empty
+              - service-descriptor-shape-match
+              - library-snapshot-shape-match
+
+  # ---------------------------------------------------------------------------
+  # 3.5 ResidualRiskJustification
+  # ---------------------------------------------------------------------------
+  ResidualRiskJustification:
+    type: object
+    additionalProperties: false
+    required:
+      - is_acceptable_under_iso14971
+      - basis
+      - benefit_risk_summary
+      - out_of_scope_assertion
+    properties:
+      is_acceptable_under_iso14971:
+        type: boolean
+        description: >
+          The reviewer's signature attests this; validators MUST
+          compute the post-mitigation `combined` against the
+          effective `acceptable_residual_risk_max` and refuse `true`
+          if post-mitigation risk exceeds the ceiling.
+      basis:
+        type: string
+        minLength: 1
+      benefit_risk_summary:
+        type: string
+        minLength: 1
+      out_of_scope_assertion:
+        type: string
+        minLength: 1
+      effective_acceptable_residual_risk_max:
+        $ref: "#/$defs/AcceptableResidualRiskMax"
+
+  # ---------------------------------------------------------------------------
+  # 3.6 Hazard
+  # ---------------------------------------------------------------------------
+  Hazard:
+    type: object
+    additionalProperties: false
+    required:
+      - hazard_id
+      - title
+      - category
+      - intended_use_scope
+      - narrative
+      - basis
+      - clinical_consequence
+      - pre_mitigation_risk
+      - mitigations
+      - post_mitigation_risk
+      - residual_risk_justification
+    properties:
+      hazard_id:    { $ref: "#/$defs/HazardId" }
+      title:
+        type: string
+        minLength: 1
+      category:     { $ref: "#/$defs/HazardCategory" }
+      intended_use_scope:
+        type: object
+        additionalProperties: false
+        required: [age_min_inclusive, populations, out_of_scope_populations]
+        properties:
+          age_min_inclusive:
+            type: integer
+            const: 18
+          populations:
+            type: array
+            minItems: 1
+            items:
+              type: string
+              enum:
+                - general-adult
+                - older-adult
+                - pregnant
+                - postpartum
+                - ckd
+                - t2dm
+                - hf-rEF
+                - hf-pEF
+                - cad
+                - post-stroke
+                - secondary-htn-suspected
+                - urgency
+                - emergency
+                - resistant-htn
+                - all-build-records  # for pipeline-integrity hazards
+          out_of_scope_populations:
+            type: array
+            items:
+              type: string
+              enum:
+                - pediatric
+                - acute-stroke-blood-pressure
+                - perioperative-blood-pressure
+                - bp-management-in-icu-shock
+      narrative:
+        type: object
+        additionalProperties: false
+        required: [body, description_verbatim_anchored]
+        properties:
+          description_verbatim_anchored:
+            type: boolean
+            const: true
+            description: >
+              Set to true to record that the narrative cites the
+              verbatim source via SourceAnchor pointers. Validators
+              MUST check that every narrative MUST NOT paraphrase
+              clinical text outside source anchors; the schema cannot
+              detect paraphrase mechanically, but the
+              `description_verbatim_anchored == true` invariant is the
+              author's attestation.
+          body:
+            type: string
+            minLength: 1
+      basis: { $ref: "#/$defs/Basis" }
+      clinical_consequence:
+        type: object
+        additionalProperties: false
+        required: [on_occurrence]
+        properties:
+          on_occurrence:
+            type: string
+            minLength: 1
+      pre_mitigation_risk:  { $ref: "#/$defs/Risk" }
+      mitigations:
+        type: array
+        minItems: 1
+        items: { $ref: "#/$defs/Mitigation" }
+      post_mitigation_risk: { $ref: "#/$defs/Risk" }
+      residual_risk_justification: { $ref: "#/$defs/ResidualRiskJustification" }
+
+  # ---------------------------------------------------------------------------
+  # 3.7 Cohort-axis attestations (required at signing)
+  # ---------------------------------------------------------------------------
+  CohortAxisAttestations:
+    type: object
+    additionalProperties: false
+    required:
+      - iso14971_compliance_attested
+      - no_relax_of_hard_block_attested
+      - pce_legacy_never_propagates_attested
+      - pregnancy_order_select_hardrefuse_attested
+      - errata_watch_attested
+      - source_admission_attested
+      - mitigation_verification_attested
+      - acceptable_residual_risk_within_ceiling_attested
+    properties:
+      iso14971_compliance_attested:                 { type: boolean }
+      no_relax_of_hard_block_attested:              { type: boolean }
+      pce_legacy_never_propagates_attested:         { type: boolean }
+      pregnancy_order_select_hardrefuse_attested:   { type: boolean }
+      errata_watch_attested:                        { type: boolean }
+      source_admission_attested:                    { type: boolean }
+      mitigation_verification_attested:             { type: boolean }
+      acceptable_residual_risk_within_ceiling_attested: { type: boolean }
+
+  # ---------------------------------------------------------------------------
+  # 3.8 Signer
+  # ---------------------------------------------------------------------------
+  IdentityProof:
+    type: object
+    additionalProperties: false
+    required: [ial, aal, proofing_method, proofing_evidence_uri, proofed_at, proofed_by_org]
+    properties:
+      ial: { $ref: "#/$defs/IdentityAssuranceLevel" }
+      aal: { $ref: "#/$defs/AuthenticatorAssuranceLevel" }
+      proofing_method:        { type: string }
+      proofing_evidence_uri:  { type: string, format: uri }
+      proofed_at:             { type: string, format: date-time }
+      proofed_by_org:         { type: string }
+      proofed_by_person:      { type: [string, "null"] }
+
+  Credential:
+    type: object
+    additionalProperties: false
+    required: [kind, issuer, evidence_uri, valid_from]
+    properties:
+      kind:
+        type: string
+        enum:
+          - medical-director
+          - alternate-medical-director
+          - hypertension-specialist
+          - clinical-informaticist
+          - state-medical-license
+          - institutional-credential
+          - other
+      issuer:        { type: string }
+      evidence_uri:  { type: string, format: uri }
+      valid_from:    { type: string, format: date }
+      valid_until:   { type: [string, "null"], format: date }
+      verified_at:   { type: string, format: date-time }
+      verified_by:   { type: string }
+
+  ConflictOfInterest:
+    type: object
+    additionalProperties: false
+    required: [kind, disclosed_at, scope]
+    properties:
+      kind:           { $ref: "#/$defs/COIKind" }
+      counterparty:   { type: [string, "null"] }
+      scope:
+        type: string
+        enum:
+          - none
+          - drug-class
+          - device-class
+          - therapeutic-area
+          - guideline-document
+          - safety-case-level
+          - other
+      scope_detail:   { type: [string, "null"] }
+      disclosed_at:   { type: string, format: date-time }
+      mitigation:     { type: [string, "null"] }
+      auto_disqualifies_safety_case:
+        type: boolean
+
+  Signer:
+    type: object
+    additionalProperties: false
+    required:
+      - signer_id
+      - legal_name
+      - role
+      - identity_proof
+      - credentials
+      - coi_disclosures
+      - public_key
+    properties:
+      signer_id:
+        type: string
+        pattern: "^rev-[0-9a-f]{16}$"
+        description: >
+          Stable, deterministic id (truncated SHA-256 of institution +
+          employee number + identity_proof.proofing_evidence_uri).
+          May be the same individual as a Gate-1 / Gate-2 reviewer or
+          panel chair; the rev- prefix is shared by design.
+      legal_name:                   { type: string, minLength: 1 }
+      preferred_credential_string:  { type: [string, "null"] }
+      role:
+        type: string
+        enum:
+          - medical-director
+          - alternate-medical-director
+          - hypertension-specialist-designate
+          - panel-chair-cohort-designate
+      institution:                  { type: string }
+      identity_proof:               { $ref: "#/$defs/IdentityProof" }
+      credentials:
+        type: array
+        minItems: 1
+        items: { $ref: "#/$defs/Credential" }
+      coi_disclosures:
+        type: array
+        minItems: 1
+        items: { $ref: "#/$defs/ConflictOfInterest" }
+      public_key:
+        type: object
+        additionalProperties: false
+        required: [algorithm, key_id, key_pem]
+        properties:
+          algorithm:           { $ref: "#/$defs/SignatureAlgorithm" }
+          key_id:              { type: string }
+          key_pem:             { type: string }
+          fingerprint_sha256:  { type: string, pattern: "^[0-9a-f]{64}$" }
+      assigned_at:             { type: string, format: date-time }
+
+  # ---------------------------------------------------------------------------
+  # 3.9 TimeStamp / Signature
+  # ---------------------------------------------------------------------------
+  TimeStamp:
+    type: object
+    additionalProperties: false
+    required: [tsa_name, tsa_url, tsa_cert_fingerprint_sha256, time, token_b64]
+    properties:
+      tsa_name:                    { type: string }
+      tsa_url:                     { type: string, format: uri }
+      tsa_cert_fingerprint_sha256: { type: string, pattern: "^[0-9a-f]{64}$" }
+      time:                        { type: string, format: date-time }
+      token_b64:                   { type: string }
+
+  Signature:
+    type: object
+    additionalProperties: false
+    required: [algorithm, key_id, payload_canonical_form, payload_sha256, signature_b64, time_stamp]
+    properties:
+      algorithm:               { $ref: "#/$defs/SignatureAlgorithm" }
+      key_id:                  { type: string }
+      payload_canonical_form:
+        type: string
+        enum: [json-canonical-rfc8785]
+      payload_sha256:          { type: string, pattern: "^[0-9a-f]{64}$" }
+      signature_b64:           { type: string }
+      time_stamp:              { $ref: "#/$defs/TimeStamp" }
+      verifies:                { type: boolean }
+
+  # ---------------------------------------------------------------------------
+  # 3.10 SafetyCaseAuditEvent
+  # ---------------------------------------------------------------------------
+  SafetyCaseAuditEvent:
+    type: object
+    additionalProperties: false
+    required: [event_id, occurred_at, kind, actor_id, payload_sha256]
+    properties:
+      event_id:        { type: string, pattern: "^evt-[0-9a-f]{16}$" }
+      occurred_at:     { type: string, format: date-time }
+      kind:            { $ref: "#/$defs/AuditEventKind" }
+      actor_id:        { type: string }
+      payload_sha256:  { type: string, pattern: "^[0-9a-f]{64}$" }
+      prov_activity_id:{ type: [string, "null"] }
+
+# -----------------------------------------------------------------------------
+# 4. ROOT TYPE — SafetyCaseHTN
+# -----------------------------------------------------------------------------
+type: object
+additionalProperties: false
+required:
+  - schema_version
+  - safety_case_id
+  - safety_case_version
+  - guideline_manifest_ref
+  - build
+  - intended_use_scope
+  - hazards
+  - cohort_axis_attestations
+  - signer
+  - state
+  - audit_log
+  - fixity
+properties:
+
+  schema_version:
+    type: string
+    const: "1.0.0"
+
+  safety_case_id:
+    type: string
+    pattern: "^sc-[0-9a-f]{16}$"
+    description: >
+      Stable, deterministic id (truncated SHA-256 of build_run_id +
+      manifest_sha256 + hazards-set-sha256 + state).
+
+  safety_case_version:
+    type: string
+    pattern: "^[0-9]+\\.[0-9]+\\.[0-9]+$"
+
+  predecessor_safety_case_id:
+    type: [string, "null"]
+    pattern: "^sc-[0-9a-f]{16}$|^null$"
+
+  predecessor_safety_case_state:
+    type: [string, "null"]
+    enum: [superseded, withdrawn, null]
+
+  guideline_manifest_ref:
+    type: string
+    description: Pointer to the active `schemas/guideline-manifest-hbp-2025.yaml` instance.
+
+  # ---------------------------------------------------------------------------
+  # 4.1 Build identity
+  # ---------------------------------------------------------------------------
+  build:
+    type: object
+    additionalProperties: false
+    required: [run_id, build_version_label, opened_at]
+    properties:
+      run_id:                 { type: string, format: uuid }
+      build_version_label:
+        type: string
+        pattern: "^v[0-9]+\\.[0-9]+\\.[0-9]+\\+ACC-AHA-2025\\+US\\+[0-9]{4}-[0-9]{2}-[0-9]{2}$"
+      opened_at:              { type: string, format: date-time }
+      signed_at:              { type: [string, "null"], format: date-time }
+      records_path:           { type: string }
+      records_sha256:         { type: string, pattern: "^[0-9a-f]{64}$" }
+      atomic_units_path:      { type: string }
+      atomic_units_sha256:    { type: string, pattern: "^[0-9a-f]{64}$" }
+      gate1_register_paths:
+        type: array
+        minItems: 1
+        items: { type: string }
+      gate1_register_sha256s:
+        type: array
+        minItems: 1
+        items: { type: string, pattern: "^[0-9a-f]{64}$" }
+      gate2_register_paths:
+        type: array
+        minItems: 1
+        items: { type: string }
+      gate2_register_sha256s:
+        type: array
+        minItems: 1
+        items: { type: string, pattern: "^[0-9a-f]{64}$" }
+      cds_hooks_dir:
+        type: string
+
+  # ---------------------------------------------------------------------------
+  # 4.2 Intended-use scope (verbatim from manifest)
+  # ---------------------------------------------------------------------------
+  intended_use_scope:
+    type: object
+    additionalProperties: false
+    required:
+      - statement
+      - age_min_inclusive
+      - in_scope
+      - out_of_scope
+      - acceptable_residual_risk_max
+      - effective_acceptable_residual_risk_max
+    properties:
+      statement:
+        type: string
+        minLength: 1
+        description: Verbatim from manifest.intended_use.statement.
+      age_min_inclusive:
+        type: integer
+        const: 18
+      in_scope:
+        type: array
+        minItems: 1
+        items: { type: string }
+      out_of_scope:
+        type: array
+        minItems: 1
+        items: { type: string }
+      acceptable_residual_risk_max:
+        $ref: "#/$defs/AcceptableResidualRiskMax"
+      effective_acceptable_residual_risk_max:
+        $ref: "#/$defs/AcceptableResidualRiskMax"
+        description: >
+          The stricter of `acceptable_residual_risk_max` (this Safety
+          Case) and the manifest's pinned ceiling (when present). The
+          effective ceiling is the value validators apply to per-hazard
+          post-mitigation risk.
+
+  # ---------------------------------------------------------------------------
+  # 4.3 Hazards (closed set H-01..H-10, exactly once each)
+  # ---------------------------------------------------------------------------
+  hazards:
+    type: array
+    minItems: 10
+    maxItems: 10
+    items: { $ref: "#/$defs/Hazard" }
+
+  # ---------------------------------------------------------------------------
+  # 4.4 Cohort-axis attestations (required for `signed` state)
+  # ---------------------------------------------------------------------------
+  cohort_axis_attestations:
+    $ref: "#/$defs/CohortAxisAttestations"
+
+  # ---------------------------------------------------------------------------
+  # 4.5 Signer
+  # ---------------------------------------------------------------------------
+  signer: { $ref: "#/$defs/Signer" }
+
+  # ---------------------------------------------------------------------------
+  # 4.6 State
+  # ---------------------------------------------------------------------------
+  state: { $ref: "#/$defs/SafetyCaseState" }
+
+  # ---------------------------------------------------------------------------
+  # 4.7 Signature (required when state == "signed")
+  # ---------------------------------------------------------------------------
+  signature:
+    oneOf:
+      - $ref: "#/$defs/Signature"
+      - type: "null"
+
+  # ---------------------------------------------------------------------------
+  # 4.8 Audit log (append-only)
+  # ---------------------------------------------------------------------------
+  audit_log:
+    type: array
+    items: { $ref: "#/$defs/SafetyCaseAuditEvent" }
+
+  # ---------------------------------------------------------------------------
+  # 4.9 Fixity
+  # ---------------------------------------------------------------------------
+  fixity:
+    type: object
+    additionalProperties: false
+    required: [safety_case_sha256, computed_at, canonical_form]
+    properties:
+      safety_case_sha256:
+        type: string
+        pattern: "^[0-9a-f]{64}$"
+        description: >
+          SHA-256 of the JCS-canonical form of this document with
+          both `fixity` and `signature` excluded. The hash MUST be
+          deterministic across re-runs given identical inputs.
+      computed_at:    { type: string, format: date-time }
+      canonical_form: { type: string, enum: [json-canonical-rfc8785] }
+
+  # ---------------------------------------------------------------------------
+  # 4.10 Optional institutional extensions (off by default)
+  # ---------------------------------------------------------------------------
+  extensions:
+    type: [array, "null"]
+    description: >
+      Institutional hazard extensions, permitted only if the manifest's
+      `safety_extensions_authorized == true`. Each extension follows
+      the Hazard type; the Gate-3 bundle hash covers the union of
+      `hazards[]` and `extensions[]`.
+    items: { $ref: "#/$defs/Hazard" }
+
+# -----------------------------------------------------------------------------
+# 5. CROSS-FIELD INVARIANTS (validators MUST enforce)
+# -----------------------------------------------------------------------------
+
+invariants:
+
+  - id: SC-INV-01
+    description: >
+      `hazards[]` MUST contain each `HazardId` from H-01..H-10 exactly
+      once. Duplicates or missing ids are a release blocker
+      (closed_hazard_set).
+
+  - id: SC-INV-02
+    description: >
+      Every Hazard's `category` MUST match the canonical category for
+      its hazard_id (H-01: drug-population; H-02: drug-drug-population;
+      H-03: drug-drug; H-04: drug-population; H-05: drug-protocol;
+      H-06: workup-omission; H-07: measurement-protocol;
+      H-08..H-10: pipeline-integrity).
+
+  - id: SC-INV-03
+    description: >
+      For every clinical hazard (H-01..H-07), `basis.source_anchors[]`
+      MUST contain at least one anchor with non-null `record_id` AND
+      at least one with non-null `atomic_unit_id`. Validators MUST
+      resolve and verify against the build's records.json and
+      atomic-units.json.
+
+  - id: SC-INV-04
+    description: >
+      For every pipeline-integrity hazard (H-08..H-10),
+      `basis.source_anchors[]` MUST contain at least one anchor with
+      `anchor_kind == "pipeline-control-prov-evidence"` and a non-null
+      `pipeline_control_evidence.prov_activity_id` resolvable in the
+      build's PROV bundle.
+
+  - id: SC-INV-05
+    description: >
+      `basis.cor` and `basis.loe` MUST be members of the closed enums
+      `AccAhaCOR` / `AccAhaLOE`. For pipeline-integrity hazards,
+      `basis.cor_inheritance_kind` MUST be `derived-most-restrictive`;
+      for clinical hazards, `native`.
+
+  - id: SC-INV-06
+    description: >
+      Every `Risk.combined` MUST equal the matrix mapping of
+      `(severity, likelihood)` per §2.6. Reviewer overrides of
+      `combined` are forbidden; mismatches are a release blocker.
+
+  - id: SC-INV-07
+    description: >
+      When `pre_mitigation_risk.severity != post_mitigation_risk.severity`
+      on the same Hazard, `post_mitigation_risk.severity_change_justification`
+      MUST be a non-empty string and the reviewer's signature attests
+      its sufficiency. Missing justification is a release blocker.
+
+  - id: SC-INV-08
+    description: >
+      Every Hazard MUST satisfy the per-hazard mitigation-kind
+      constraints in §2.4 (MitigationConstraintMatrix). Validators
+      MUST enforce both kind presence and per-kind parameter
+      constraints (Library name, hard-block invariant kind, CDS Hooks
+      service id, hook type, posture, pipeline-control kind,
+      documentation artifact + section).
+
+  - id: SC-INV-09
+    description: >
+      For Hazard H-01:
+        - At least one mitigation MUST have kind == "cql-library" with
+          target.library_name == "PregnancyHTN" AND
+          target.hard_block_invariant_kind ==
+          "pregnancy-denylist-order-select-hard-refuse";
+        - At least one mitigation MUST have kind == "cds-hooks-service"
+          with target.service_id == "htn-pregnancy-denylist" AND
+          target.hook == "order-select" AND
+          target.posture == "hard-refuse";
+        - No mitigation referencing the pregnancy denylist may carry
+          posture "soft-warning" or "informational".
+      Validators MUST detect any deviation and BLOCK the build.
+
+  - id: SC-INV-10
+    description: >
+      No mitigation referencing a CQL Library may resolve (at sign
+      time) to a Library whose `snapshot.bound_risk_engine.name ==
+      "PCE-legacy"` OR `snapshot.bound_risk_engine.legacy_only ==
+      true`. PCE-legacy never propagates per ADR-HTN-001 D5.
+
+  - id: SC-INV-11
+    description: >
+      Every Mitigation.verification.verifies MUST recompute to true at
+      sign time. Producer claims of `true` are not trusted; validators
+      perform the verification:
+        - cql-library: Library exists in build, Gate-2 register
+          finalized, hard_block_invariant_kind in
+          hard_block_invariants[], reference test pass.
+        - cds-hooks-service: descriptor exists, hook + posture match.
+        - pipeline-control: prov_activity_id resolves in build PROV.
+        - documentation: artifact path exists, section non-empty.
+
+  - id: SC-INV-12
+    description: >
+      For every Hazard, `post_mitigation_risk.combined` MUST be at or
+      below `intended_use_scope.effective_acceptable_residual_risk_max`.
+      Risk levels are ordered low < medium < high < extreme.
+      Exceedance is a release blocker (acceptable_residual_risk_ceiling).
+
+  - id: SC-INV-13
+    description: >
+      `intended_use_scope.effective_acceptable_residual_risk_max`
+      MUST be the stricter of (a) the Safety Case's recorded
+      `acceptable_residual_risk_max`, and (b) the active manifest's
+      pinned ceiling (when present). A weaker effective ceiling than
+      either source is a release blocker.
+
+  - id: SC-INV-14
+    description: >
+      For state == "signed":
+        - signature MUST be non-null AND signature.payload_sha256 MUST
+          equal SHA-256 of the JCS-canonical form of this document with
+          `signature` and `fixity` excluded.
+        - signature.verifies MUST recompute to true under
+          signer.public_key.
+        - signature.time_stamp.tsa_cert_fingerprint_sha256 MUST be a
+          member of the active manifest's tsa_list[]; the time-stamp
+          `time` MUST fall within the cert validity window.
+        - cohort_axis_attestations: every property MUST be true.
+
+  - id: SC-INV-15
+    description: >
+      For state == "draft":
+        - signature MUST be null.
+        - cohort_axis_attestations MAY have any boolean values; the
+          schema records the working state. Validators MUST refuse to
+          transition to "signed" while any attestation is false.
+
+  - id: SC-INV-16
+    description: >
+      `audit_log[]` MUST be append-only and ordered by `occurred_at`.
+      Validators compute the chained hash of events; out-of-order or
+      missing events indicate tampering and are release blockers.
+
+  - id: SC-INV-17
+    description: >
+      `fixity.safety_case_sha256` MUST equal SHA-256 of the
+      JCS-canonical form of this document with both `fixity` and
+      `signature` excluded. The hash MUST be deterministic across
+      re-runs given identical inputs.
+
+  - id: SC-INV-18
+    description: >
+      `predecessor_safety_case_id` MUST be set whenever this Safety
+      Case supersedes a prior one. The predecessor's state (recorded
+      in `predecessor_safety_case_state`) MUST be `superseded` or
+      `withdrawn`. Cycles in the predecessor chain are a release
+      blocker.
+
+  - id: SC-INV-19
+    description: >
+      `signer.identity_proof.ial` MUST be `IAL2` or `IAL3`. Where
+      institutional policy pins a higher level for safety attestation,
+      validators enforce that level. Auto-disqualifying COI on the
+      signer is a release blocker; substitute appointment is required.
+
+  - id: SC-INV-20
+    description: >
+      `extensions` MAY be non-null only if the active manifest's
+      `safety_extensions_authorized == true`. When present, every
+      entry follows the Hazard type and is subject to all per-hazard
+      invariants except `closed_hazard_set` (extensions are not
+      members of H-01..H-10).
+
+  - id: SC-INV-21
+    description: >
+      Every Hazard's `narrative.description_verbatim_anchored` MUST be
+      `true`. The author's attestation that the narrative cites
+      verbatim source via `SourceAnchor` pointers is a precondition for
+      Gate-3 acceptance.
+
+  - id: SC-INV-22
+    description: >
+      Every Mitigation.target.gate2_register_path (when kind ==
+      "cql-library") MUST resolve to a Gate-2 register file in state
+      `finalized` at validation time. The register's recorded
+      `library_id` for that Library MUST match
+      `Mitigation.target.library_id`.
+
+  - id: SC-INV-23
+    description: >
+      For every Mitigation of kind "cds-hooks-service", the resolved
+      service descriptor MUST declare the manifest's required age gate
+      (≥ 18) per `manifest.intended_use.age_min_inclusive`. Lower
+      age gates are a release blocker.
+
+  - id: SC-INV-24
+    description: >
+      `cohort_axis_attestations.pregnancy_order_select_hardrefuse_attested`
+      MUST be true if any Hazard is H-01 (always true given
+      SC-INV-01). Validators MUST refuse to sign with this attestation
+      false.
+
+  - id: SC-INV-25
+    description: >
+      `cohort_axis_attestations.pce_legacy_never_propagates_attested`
+      MUST be true. SC-INV-10 enforces the underlying property; this
+      attestation is the signer's acknowledgement.
+
+  - id: SC-INV-26
+    description: >
+      Validators MUST scan every Hazard.narrative.body and every
+      Mitigation.rationale for soft-warning posture proposals on the
+      pregnancy denylist (closed pattern set). Any match emits an
+      audit event of kind `pregnancy-denylist-soft-warning-detected`
+      AND blocks the Safety Case from advancing to `signed`.
+
+  - id: SC-INV-27
+    description: >
+      Validators MUST scan every Hazard.narrative.body and every
+      Mitigation.rationale for PCE-legacy substitution proposals on
+      any Library risk-engine binding. Any match emits an audit event
+      of kind `pce-legacy-binding-detected` AND blocks the Safety
+      Case from advancing to `signed`.
+
+  - id: SC-INV-28
+    description: >
+      Once state == "signed", neither `hazards[]`, `signer`,
+      `intended_use_scope`, `cohort_axis_attestations`,
+      `predecessor_*`, nor `signature` may be mutated. Mutation
+      attempts MUST be detected (by recompute of
+      `fixity.safety_case_sha256`) and blocked
+      (post_signoff_immutability).
+
+# =============================================================================
+# 6. WORKED EXAMPLES (shape-correctness fixtures)
+# -----------------------------------------------------------------------------
+# Two examples are provided:
+#   6.1 A draft Safety Case with all ten hazards present (stub bodies).
+#   6.2 A signed Safety Case with the medical-director signature
+#       envelope.
+#
+# EVERY field whose value can ONLY come from a real signer, real KMS
+# key, real institutional contract, or live build artifacts is marked
+# `HUMAN_FILL` with explicit instructions. The pipeline refuses to
+# operate on Safety Cases containing `HUMAN_FILL` tokens.
+# =============================================================================
+
+examples:
+
+  # ---------------------------------------------------------------------------
+  # 6.1 Draft Safety Case (compact; one hazard expanded, nine summarized)
+  # ---------------------------------------------------------------------------
+  - schema_version: "1.0.0"
+    safety_case_id: "sc-HUMAN_FILL_16HEX"
+    safety_case_version: "1.0.0"
+    predecessor_safety_case_id: null
+    predecessor_safety_case_state: null
+    guideline_manifest_ref: "guideline-manifest-hbp-2025.v1.0.0+ACC-AHA-2025+US+HUMAN_FILL_DATE.yaml"
+
+    build:
+      run_id: "HUMAN_FILL_UUID"
+      build_version_label: "v1.0.0+ACC-AHA-2025+US+HUMAN_FILL_ISO_DATE"
+      opened_at: "HUMAN_FILL_ISO_DATETIME"
+      signed_at: null
+      records_path: "work/HUMAN_FILL_RUN_ID/records.json"
+      records_sha256: "HUMAN_FILL_64HEX"
+      atomic_units_path: "work/HUMAN_FILL_RUN_ID/atomic-units.json"
+      atomic_units_sha256: "HUMAN_FILL_64HEX"
+      gate1_register_paths: ["work/HUMAN_FILL_RUN_ID/gate1/cohort-HUMAN_FILL_16HEX.signed.jsonld"]
+      gate1_register_sha256s: ["HUMAN_FILL_64HEX"]
+      gate2_register_paths: ["work/HUMAN_FILL_RUN_ID/gate2/cohort-HUMAN_FILL_16HEX.signed.jsonld"]
+      gate2_register_sha256s: ["HUMAN_FILL_64HEX"]
+      cds_hooks_dir: "work/HUMAN_FILL_RUN_ID/cds-hooks/"
+
+    intended_use_scope:
+      statement: "HUMAN_FILL: verbatim from manifest.intended_use.statement"
+      age_min_inclusive: 18
+      in_scope:
+        - "Adults aged ≥ 18 with diagnosed or suspected hypertension."
+      out_of_scope:
+        - "Pediatric blood pressure management (< 18)."
+        - "Acute stroke blood-pressure management."
+        - "Perioperative blood-pressure management."
+        - "Blood-pressure management in ICU shock."
+      acceptable_residual_risk_max: medium
+      effective_acceptable_residual_risk_max: medium
+
+    hazards:
+      - hazard_id: H-01
+        title: "RAAS / MRA / direct-renin in pregnancy"
+        category: drug-population
+        intended_use_scope:
+          age_min_inclusive: 18
+          populations: [pregnant, postpartum]
+          out_of_scope_populations: [pediatric]
+        narrative:
+          description_verbatim_anchored: true
+          body: |
+            HUMAN_FILL: source-anchored description citing
+            RecommendationRecord ids and AtomicUnit ids that establish
+            the COR III-Harm grading for ACE inhibitors, ARBs, MRAs,
+            and direct renin inhibitors in pregnancy. NO paraphrase
+            outside the anchored quotations.
+        basis:
+          cor: III-Harm
+          loe: B-NR
+          cor_inheritance_kind: native
+          source_anchors:
+            - { anchor_kind: cor-iii-harm-anchor, record_id: "rec-HUMAN_FILL_16HEX", atomic_unit_id: "au-HUMAN_FILL_16HEX", sair_anchor: { page: 12, bbox: { x0: 0, y0: 0, x1: 0, y1: 0 }, sair_sha256: "HUMAN_FILL_64HEX" } }
+        clinical_consequence:
+          on_occurrence: "Fetal demise, neonatal renal failure, oligohydramnios."
+        pre_mitigation_risk:
+          severity: catastrophic
+          likelihood: occasional
+          combined: high
+        mitigations:
+          - mitigation_id: "mit-HUMAN_FILL_16HEX"
+            kind: cql-library
+            target:
+              library_id: "lib-HUMAN_FILL_16HEX"
+              library_name: PregnancyHTN
+              hard_block_invariant_kind: pregnancy-denylist-order-select-hard-refuse
+              gate2_register_path: "work/HUMAN_FILL_RUN_ID/gate2/cohort-HUMAN_FILL_16HEX.signed.jsonld"
+              gate2_register_sha256: "HUMAN_FILL_64HEX"
+            asserts_invariant_kind: pregnancy-denylist-order-select-hard-refuse
+            rationale: |
+              The PregnancyHTN Library asserts the
+              order-select hard-refuse invariant; the verifying
+              reference test passes. The Library's Gate-2 register is
+              finalized.
+            verification:
+              verifies: true
+              verified_by_reference_test_id: "HUMAN_FILL_TEST_ID"
+              verified_at: "HUMAN_FILL_ISO_DATETIME"
+              verification_method: reference-test-pack-pass
+          - mitigation_id: "mit-HUMAN_FILL_16HEX"
+            kind: cds-hooks-service
+            target:
+              service_id: htn-pregnancy-denylist
+              hook: order-select
+              posture: hard-refuse
+              service_descriptor_path: "work/HUMAN_FILL_RUN_ID/cds-hooks/htn-pregnancy-denylist.json"
+              service_descriptor_sha256: "HUMAN_FILL_64HEX"
+            asserts_invariant_kind: pregnancy-denylist-order-select-hard-refuse
+            rationale: "Order-select hard refusal at the prescribing surface; no soft warning; no attending-override branch."
+            verification:
+              verifies: true
+              verified_by_reference_test_id: null
+              verified_at: "HUMAN_FILL_ISO_DATETIME"
+              verification_method: service-descriptor-shape-match
+        post_mitigation_risk:
+          severity: catastrophic
+          likelihood: rare
+          combined: high
+          severity_change_justification: null
+        residual_risk_justification:
+          is_acceptable_under_iso14971: true
+          basis: |
+            HUMAN_FILL: source-anchored argument that residual risk is
+            ALARP (as low as reasonably practicable) given the
+            order-select hard refusal, the Gate-2 finalization of the
+            PregnancyHTN Library, the Gate-1 finalization of the
+            pregnancy-record cohort under MFM + clinical pharmacology
+            review, and the absence of attending-override branches.
+          benefit_risk_summary: |
+            HUMAN_FILL: semi-quantitative benefit-risk summary noting
+            that the framework's intended use is restricted to adults
+            ≥ 18 and that the pregnancy denylist's hard refusal
+            prevents the prescribing path entirely; any residual
+            occurrence is from non-system-mediated prescribing
+            outside the framework's intended-use scope.
+          out_of_scope_assertion: "Pediatric blood pressure management is out of scope."
+          effective_acceptable_residual_risk_max: medium
+
+      # H-02..H-10 follow the same shape; abbreviated here as stubs.
+      - { hazard_id: H-02, title: "Triple-whammy AKI", category: drug-drug-population, intended_use_scope: { age_min_inclusive: 18, populations: [general-adult, ckd], out_of_scope_populations: [pediatric] }, narrative: { description_verbatim_anchored: true, body: "HUMAN_FILL" }, basis: { cor: IIa, loe: B-NR, cor_inheritance_kind: native, source_anchors: [ { anchor_kind: explicit-should-not-anchor, record_id: "rec-HUMAN_FILL_16HEX", atomic_unit_id: "au-HUMAN_FILL_16HEX" } ] }, clinical_consequence: { on_occurrence: "Acute kidney injury." }, pre_mitigation_risk: { severity: serious, likelihood: occasional, combined: high }, mitigations: [ { mitigation_id: "mit-HUMAN_FILL_16HEX", kind: cql-library, target: { library_id: "lib-HUMAN_FILL_16HEX", library_name: FirstLineSelection, hard_block_invariant_kind: aki-triple-whammy-warning, gate2_register_path: "...", gate2_register_sha256: "HUMAN_FILL_64HEX" }, asserts_invariant_kind: aki-triple-whammy-warning, rationale: "HUMAN_FILL", verification: { verifies: true, verified_by_reference_test_id: "HUMAN_FILL_TEST_ID", verified_at: "HUMAN_FILL_ISO_DATETIME", verification_method: reference-test-pack-pass } }, { mitigation_id: "mit-HUMAN_FILL_16HEX", kind: cds-hooks-service, target: { service_id: htn-pharm-first-line-check, hook: order-select, posture: hard-refuse }, asserts_invariant_kind: aki-triple-whammy-warning, rationale: "HUMAN_FILL", verification: { verifies: true, verified_by_reference_test_id: null, verified_at: "HUMAN_FILL_ISO_DATETIME", verification_method: service-descriptor-shape-match } } ], post_mitigation_risk: { severity: serious, likelihood: rare, combined: medium }, residual_risk_justification: { is_acceptable_under_iso14971: true, basis: "HUMAN_FILL", benefit_risk_summary: "HUMAN_FILL", out_of_scope_assertion: "HUMAN_FILL", effective_acceptable_residual_risk_max: medium } }
+      - { hazard_id: H-03, title: "Hyperkalemia on ACEi+ARB+MRA", category: drug-drug, intended_use_scope: { age_min_inclusive: 18, populations: [general-adult, ckd, hf-rEF], out_of_scope_populations: [pediatric] }, narrative: { description_verbatim_anchored: true, body: "HUMAN_FILL" }, basis: { cor: IIa, loe: B-NR, cor_inheritance_kind: native, source_anchors: [ { anchor_kind: explicit-should-not-anchor, record_id: "rec-HUMAN_FILL_16HEX", atomic_unit_id: "au-HUMAN_FILL_16HEX" } ] }, clinical_consequence: { on_occurrence: "Cardiac arrhythmia, asystole." }, pre_mitigation_risk: { severity: serious, likelihood: occasional, combined: high }, mitigations: [ { mitigation_id: "mit-HUMAN_FILL_16HEX", kind: cql-library, target: { library_id: "lib-HUMAN_FILL_16HEX", library_name: FirstLineSelection, hard_block_invariant_kind: hyperkalemia-aceiarb-mra-warning, gate2_register_path: "...", gate2_register_sha256: "HUMAN_FILL_64HEX" }, asserts_invariant_kind: hyperkalemia-aceiarb-mra-warning, rationale: "HUMAN_FILL", verification: { verifies: true, verified_by_reference_test_id: "HUMAN_FILL_TEST_ID", verified_at: "HUMAN_FILL_ISO_DATETIME", verification_method: reference-test-pack-pass } }, { mitigation_id: "mit-HUMAN_FILL_16HEX", kind: cds-hooks-service, target: { service_id: htn-pharm-first-line-check, hook: order-select, posture: hard-refuse }, asserts_invariant_kind: hyperkalemia-aceiarb-mra-warning, rationale: "HUMAN_FILL", verification: { verifies: true, verified_by_reference_test_id: null, verified_at: "HUMAN_FILL_ISO_DATETIME", verification_method: service-descriptor-shape-match } } ], post_mitigation_risk: { severity: serious, likelihood: rare, combined: medium }, residual_risk_justification: { is_acceptable_under_iso14971: true, basis: "HUMAN_FILL", benefit_risk_summary: "HUMAN_FILL", out_of_scope_assertion: "HUMAN_FILL", effective_acceptable_residual_risk_max: medium } }
+      - { hazard_id: H-04, title: "Older-adult orthostasis / falls", category: drug-population, intended_use_scope: { age_min_inclusive: 18, populations: [older-adult], out_of_scope_populations: [pediatric] }, narrative: { description_verbatim_anchored: true, body: "HUMAN_FILL" }, basis: { cor: IIa, loe: B-NR, cor_inheritance_kind: native, source_anchors: [ { anchor_kind: explicit-should-not-anchor, record_id: "rec-HUMAN_FILL_16HEX", atomic_unit_id: "au-HUMAN_FILL_16HEX" } ] }, clinical_consequence: { on_occurrence: "Falls, fractures, head injury." }, pre_mitigation_risk: { severity: serious, likelihood: probable, combined: high }, mitigations: [ { mitigation_id: "mit-HUMAN_FILL_16HEX", kind: cql-library, target: { library_id: "lib-HUMAN_FILL_16HEX", library_name: SpecialPopulationModifiers, hard_block_invariant_kind: older-adult-orthostasis-monitoring, gate2_register_path: "...", gate2_register_sha256: "HUMAN_FILL_64HEX" }, asserts_invariant_kind: older-adult-orthostasis-monitoring, rationale: "HUMAN_FILL", verification: { verifies: true, verified_by_reference_test_id: "HUMAN_FILL_TEST_ID", verified_at: "HUMAN_FILL_ISO_DATETIME", verification_method: reference-test-pack-pass } }, { mitigation_id: "mit-HUMAN_FILL_16HEX", kind: cds-hooks-service, target: { service_id: htn-pharm-first-line-check, hook: order-select, posture: soft-warning }, asserts_invariant_kind: older-adult-orthostasis-monitoring, rationale: "HUMAN_FILL", verification: { verifies: true, verified_by_reference_test_id: null, verified_at: "HUMAN_FILL_ISO_DATETIME", verification_method: service-descriptor-shape-match } } ], post_mitigation_risk: { severity: serious, likelihood: occasional, combined: high }, residual_risk_justification: { is_acceptable_under_iso14971: true, basis: "HUMAN_FILL: ALARP justification given the closed list of monitoring + dosing-restriction invariants for older adults", benefit_risk_summary: "HUMAN_FILL", out_of_scope_assertion: "HUMAN_FILL", effective_acceptable_residual_risk_max: high } }
+      - { hazard_id: H-05, title: "Beta-blocker rebound", category: drug-protocol, intended_use_scope: { age_min_inclusive: 18, populations: [general-adult, cad], out_of_scope_populations: [pediatric] }, narrative: { description_verbatim_anchored: true, body: "HUMAN_FILL" }, basis: { cor: IIa, loe: C-EO, cor_inheritance_kind: native, source_anchors: [ { anchor_kind: explicit-should-not-anchor, record_id: "rec-HUMAN_FILL_16HEX", atomic_unit_id: "au-HUMAN_FILL_16HEX" } ] }, clinical_consequence: { on_occurrence: "Rebound hypertension, ischemia, infarction." }, pre_mitigation_risk: { severity: serious, likelihood: occasional, combined: high }, mitigations: [ { mitigation_id: "mit-HUMAN_FILL_16HEX", kind: cql-library, target: { library_id: "lib-HUMAN_FILL_16HEX", library_name: SpecialPopulationModifiers, hard_block_invariant_kind: beta-blocker-no-abrupt-discontinuation, gate2_register_path: "...", gate2_register_sha256: "HUMAN_FILL_64HEX" }, asserts_invariant_kind: beta-blocker-no-abrupt-discontinuation, rationale: "HUMAN_FILL", verification: { verifies: true, verified_by_reference_test_id: "HUMAN_FILL_TEST_ID", verified_at: "HUMAN_FILL_ISO_DATETIME", verification_method: reference-test-pack-pass } }, { mitigation_id: "mit-HUMAN_FILL_16HEX", kind: documentation, target: { artifact: guideline-card, section: "protocolized-taper", artifact_path: "work/HUMAN_FILL_RUN_ID/docs/guideline-card.md", artifact_sha256: "HUMAN_FILL_64HEX" }, asserts_invariant_kind: beta-blocker-no-abrupt-discontinuation, rationale: "HUMAN_FILL", verification: { verifies: true, verified_by_reference_test_id: null, verified_at: "HUMAN_FILL_ISO_DATETIME", verification_method: artifact-section-non-empty } } ], post_mitigation_risk: { severity: serious, likelihood: rare, combined: medium }, residual_risk_justification: { is_acceptable_under_iso14971: true, basis: "HUMAN_FILL", benefit_risk_summary: "HUMAN_FILL", out_of_scope_assertion: "HUMAN_FILL", effective_acceptable_residual_risk_max: medium } }
+      - { hazard_id: H-06, title: "Missed primary aldosteronism", category: workup-omission, intended_use_scope: { age_min_inclusive: 18, populations: [resistant-htn], out_of_scope_populations: [pediatric] }, narrative: { description_verbatim_anchored: true, body: "HUMAN_FILL" }, basis: { cor: I, loe: B-NR, cor_inheritance_kind: native, source_anchors: [ { anchor_kind: explicit-should-not-anchor, record_id: "rec-HUMAN_FILL_16HEX", atomic_unit_id: "au-HUMAN_FILL_16HEX" } ] }, clinical_consequence: { on_occurrence: "Untreated curable secondary HTN; CV events." }, pre_mitigation_risk: { severity: serious, likelihood: probable, combined: high }, mitigations: [ { mitigation_id: "mit-HUMAN_FILL_16HEX", kind: cql-library, target: { library_id: "lib-HUMAN_FILL_16HEX", library_name: ResistantHTN, hard_block_invariant_kind: aldosteronism-screen-resistant, gate2_register_path: "...", gate2_register_sha256: "HUMAN_FILL_64HEX" }, asserts_invariant_kind: aldosteronism-screen-resistant, rationale: "HUMAN_FILL", verification: { verifies: true, verified_by_reference_test_id: "HUMAN_FILL_TEST_ID", verified_at: "HUMAN_FILL_ISO_DATETIME", verification_method: reference-test-pack-pass } }, { mitigation_id: "mit-HUMAN_FILL_16HEX", kind: cds-hooks-service, target: { service_id: htn-resistant-workup, hook: patient-view, posture: informational }, asserts_invariant_kind: aldosteronism-screen-resistant, rationale: "HUMAN_FILL", verification: { verifies: true, verified_by_reference_test_id: null, verified_at: "HUMAN_FILL_ISO_DATETIME", verification_method: service-descriptor-shape-match } } ], post_mitigation_risk: { severity: serious, likelihood: occasional, combined: high }, residual_risk_justification: { is_acceptable_under_iso14971: true, basis: "HUMAN_FILL", benefit_risk_summary: "HUMAN_FILL", out_of_scope_assertion: "HUMAN_FILL", effective_acceptable_residual_risk_max: high } }
+      - { hazard_id: H-07, title: "In-office-only diagnosis", category: measurement-protocol, intended_use_scope: { age_min_inclusive: 18, populations: [general-adult], out_of_scope_populations: [pediatric] }, narrative: { description_verbatim_anchored: true, body: "HUMAN_FILL" }, basis: { cor: I, loe: B-NR, cor_inheritance_kind: native, source_anchors: [ { anchor_kind: explicit-should-not-anchor, record_id: "rec-HUMAN_FILL_16HEX", atomic_unit_id: "au-HUMAN_FILL_16HEX" } ] }, clinical_consequence: { on_occurrence: "Misdiagnosis (white-coat or masked HTN); over- or under-treatment." }, pre_mitigation_risk: { severity: major, likelihood: probable, combined: high }, mitigations: [ { mitigation_id: "mit-HUMAN_FILL_16HEX", kind: cql-library, target: { library_id: "lib-HUMAN_FILL_16HEX", library_name: HBPStaging, hard_block_invariant_kind: bp-confirmation-out-of-office, gate2_register_path: "...", gate2_register_sha256: "HUMAN_FILL_64HEX" }, asserts_invariant_kind: bp-confirmation-out-of-office, rationale: "HUMAN_FILL", verification: { verifies: true, verified_by_reference_test_id: "HUMAN_FILL_TEST_ID", verified_at: "HUMAN_FILL_ISO_DATETIME", verification_method: reference-test-pack-pass } }, { mitigation_id: "mit-HUMAN_FILL_16HEX", kind: cds-hooks-service, target: { service_id: htn-bp-stage-and-confirm, hook: patient-view, posture: informational }, asserts_invariant_kind: bp-confirmation-out-of-office, rationale: "HUMAN_FILL", verification: { verifies: true, verified_by_reference_test_id: null, verified_at: "HUMAN_FILL_ISO_DATETIME", verification_method: service-descriptor-shape-match } }, { mitigation_id: "mit-HUMAN_FILL_16HEX", kind: cds-hooks-service, target: { service_id: htn-hbpm-discharge, hook: encounter-discharge, posture: informational }, asserts_invariant_kind: bp-confirmation-out-of-office, rationale: "HUMAN_FILL", verification: { verifies: true, verified_by_reference_test_id: null, verified_at: "HUMAN_FILL_ISO_DATETIME", verification_method: service-descriptor-shape-match } } ], post_mitigation_risk: { severity: major, likelihood: occasional, combined: medium }, residual_risk_justification: { is_acceptable_under_iso14971: true, basis: "HUMAN_FILL", benefit_risk_summary: "HUMAN_FILL", out_of_scope_assertion: "HUMAN_FILL", effective_acceptable_residual_risk_max: medium } }
+      - { hazard_id: H-08, title: "LLM-hallucinated recommendation", category: pipeline-integrity, intended_use_scope: { age_min_inclusive: 18, populations: [all-build-records], out_of_scope_populations: [pediatric] }, narrative: { description_verbatim_anchored: true, body: "HUMAN_FILL" }, basis: { cor: III-Harm, loe: C-EO, cor_inheritance_kind: derived-most-restrictive, source_anchors: [ { anchor_kind: pipeline-control-prov-evidence, pipeline_control_evidence: { control_kind: extract-recommendation-cor-loe-triple-modal, prov_activity_id: "HUMAN_FILL_PROV_ACT", prov_bundle_uri: null } } ] }, clinical_consequence: { on_occurrence: "Misleading clinical recommendation surfaces in published artifact; downstream prescribing harm possible." }, pre_mitigation_risk: { severity: catastrophic, likelihood: rare, combined: high }, mitigations: [ { mitigation_id: "mit-HUMAN_FILL_16HEX", kind: pipeline-control, target: { control_kind: gate1-register-immutability, prov_activity_id: "HUMAN_FILL_PROV_ACT", prov_bundle_uri: null }, asserts_invariant_kind: null, rationale: "Gate-1 SME signoff with two-person rule and append-only audit chain.", verification: { verifies: true, verified_by_reference_test_id: null, verified_by_prov_activity_id: "HUMAN_FILL_PROV_ACT", verified_at: "HUMAN_FILL_ISO_DATETIME", verification_method: prov-bundle-evidence } }, { mitigation_id: "mit-HUMAN_FILL_16HEX", kind: pipeline-control, target: { control_kind: parse-acc-aha-recbox-cell-shape-compliance, prov_activity_id: "HUMAN_FILL_PROV_ACT", prov_bundle_uri: null }, asserts_invariant_kind: null, rationale: "Cell-shape-compliance enforces no-text-insertion at recbox parse; closed (COR, LOE, Recommendation, Supportive, Citations) shape.", verification: { verifies: true, verified_by_reference_test_id: null, verified_by_prov_activity_id: "HUMAN_FILL_PROV_ACT", verified_at: "HUMAN_FILL_ISO_DATETIME", verification_method: prov-bundle-evidence } }, { mitigation_id: "mit-HUMAN_FILL_16HEX", kind: pipeline-control, target: { control_kind: extract-recommendation-cor-loe-triple-mod

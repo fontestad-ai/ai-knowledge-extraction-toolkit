@@ -1,0 +1,1692 @@
+# =============================================================================
+# sair.yaml
+# -----------------------------------------------------------------------------
+# Structured Anchored Intermediate Representation (SAIR).
+#
+# SAIR is the single, schema-validated, fixity-anchored output of Phase 2
+# (PARSE) of the cpg-htn-2025-acc-aha pipeline. It is produced by the family
+# of parse skills (`parse-prepare-pdf`, `parse-detect-layout`,
+# `parse-extract-text`, `parse-acc-aha-recbox`, `parse-extract-figures`,
+# `parse-ocr-fallback`, `parse-reconcile-queue`) and consumed by every Phase
+# 3 (EXTRACT) skill, principally `extract-recommendation-cor-loe`.
+#
+# SAIR does NOT decide what is a "recommendation". It deterministically
+# reconstructs the document's logical structure: pages, columns, reading
+# order, text regions, tables (with cell-level consensus), figures
+# (with caption pairing, type classification, and where applicable, parsed
+# logic graphs and chart data), footnotes, and chrome (headers/footers).
+#
+# Posture: caution over velocity, fidelity over coverage, verbatim over
+# paraphrase. Every region is anchored to (pdf_sha256, page, bbox). Every
+# text byte is anchored to glyph-level char_spans. Every reversible Unicode
+# transform is recorded. Every multi-engine consensus state is preserved
+# (consensus / quorum / disputed). Every flagged item is queued, never
+# silently resolved.
+#
+# Authority:
+#   - ADR-HTN-001 D2, D3, D4, D9, D10, D11, D12, D13, D15
+#   - Parse + Extraction Phase Spec §2 (full), §3 (full), §3.7 (root shape)
+#   - Parent framework rules: `god-session`, `human-authorization`
+#
+# Relationship to neighboring schemas (separate files, referenced by $ref):
+#   - schemas/acc-aha-grading.yaml
+#   - schemas/recommendation-record-htn.yaml (downstream consumer)
+#   - schemas/atomic-unit.yaml
+#   - schemas/gate1-register.yaml
+#   - schemas/guideline-manifest-hbp-2025.yaml
+# =============================================================================
+
+$schema: "https://json-schema.org/draft/2020-12/schema"
+$id: "https://aiwg.io/cpg-htn-2025-acc-aha/schemas/sair.yaml"
+title: "StructuredAnchoredIntermediateRepresentation"
+description: >
+  Phase-2 (PARSE) output document. Single source of truth for page layout,
+  reading order, text content, table structure, figure content, footnotes,
+  and chrome of the conditioned 2025 ACC/AHA HBP Guideline working set.
+version: "1.0.0"
+schema_lifecycle: stable
+last_reviewed: "HUMAN_FILL: ISO-8601 date of most recent panel review of this schema"
+authority:
+  adr: ADR-HTN-001
+  framework: cpg-htn-2025-acc-aha
+  parent_framework: aiwg-training
+license: MIT
+
+# -----------------------------------------------------------------------------
+# 1. CLOSED ENUMERATIONS
+# -----------------------------------------------------------------------------
+# Every enum below is a closed set. Validators MUST reject unknown values;
+# downstream skills MUST refuse to operate on documents carrying unknown
+# values. Auto-correction is forbidden. Extending an enum requires schema
+# semver bump and panel-chair signoff (see §6 change_control).
+# -----------------------------------------------------------------------------
+
+$defs:
+
+  # ---------------------------------------------------------------------------
+  # 1.1 Region classes
+  # ---------------------------------------------------------------------------
+  RegionClass:
+    type: string
+    enum:
+      - title
+      - heading
+      - text
+      - list
+      - table
+      - figure
+      - caption
+      - header             # page-top chrome
+      - footer             # page-bottom chrome
+      - page-number
+      - running-title
+      - footnote
+      - equation
+      - chrome             # generic non-body repeating content
+    description: >
+      Classes assigned by the dual-detector layout consensus in Phase 2.1.
+      `chrome`, `header`, `footer`, `page-number`, and `running-title` are
+      excluded from body reading order but are persisted (anchored) for audit.
+
+  # ---------------------------------------------------------------------------
+  # 1.2 Reading-order continuity
+  # ---------------------------------------------------------------------------
+  ColumnModel:
+    type: string
+    enum: ["1col", "2col", "3col", "mixed", "unknown"]
+
+  ReadingOrderMethod:
+    type: string
+    enum: [tagged-pdf-structtree, xy-cut, layoutreader, vlm-reading-order]
+
+  # ---------------------------------------------------------------------------
+  # 1.3 Text-engine and consensus
+  # ---------------------------------------------------------------------------
+  TextEngine:
+    type: string
+    enum: [pymupdf-glyph, pdfminer-six, marker, nougat, surya-text]
+
+  TextConsensusState:
+    type: string
+    enum:
+      - text-consensus       # all configured engines agree at the sentence level (>= 0.98 sim)
+      - text-quorum          # advisory; not allowed in clinical-content channels
+      - text-disputed        # below threshold; queued for §3.6 reconciliation
+      - text-resolved        # was disputed, resolved via queue with two-person rule
+
+  # ---------------------------------------------------------------------------
+  # 1.4 Table-engine and consensus
+  # ---------------------------------------------------------------------------
+  TableEngine:
+    type: string
+    enum:
+      - camelot-lattice
+      - camelot-stream
+      - tabula-lattice
+      - tabula-stream
+      - pdfplumber
+      - vlm-tablemaster
+      - donut-table
+
+  TableSchemaDetected:
+    type: string
+    enum:
+      - acc-aha-recommendation-box
+      - acc-aha-recommendation-box-candidate   # partial-match; does NOT advance recommendation rows
+      - drug-table
+      - lab-table
+      - evidence-table
+      - other
+      - unknown
+    description: >
+      `acc-aha-recommendation-box-candidate` is reserved for tables that match
+      some heuristics but not all. Recommendation rows are NEVER emitted from
+      candidates; they are escalated as `schema-partial-match`.
+
+  CellConsensusState:
+    type: string
+    enum:
+      - cell-consensus    # >= 4 of 5 engines agree after normalization
+      - cell-quorum       # exactly 3 of 5 agree; advisory; forbidden in recommendation rows
+      - cell-disputed     # < 3 of 5 agree; queued; row is held
+      - cell-resolved     # was disputed, resolved via queue with two-person rule
+
+  # ---------------------------------------------------------------------------
+  # 1.5 Figure typing and parsers
+  # ---------------------------------------------------------------------------
+  FigureType:
+    type: string
+    enum:
+      - flowchart
+      - algorithm-diagram
+      - bar-chart
+      - line-chart
+      - scatter-chart
+      - forest-plot
+      - nomogram
+      - anatomical
+      - photograph
+      - schematic
+      - composite
+      - other
+      - unknown
+
+  FigureParser:
+    type: string
+    enum:
+      - opencv-shapes
+      - vlm-pix2struct
+      - vlm-donut
+      - vlm-florence-2
+      - chart-deplot
+      - chart-matcha
+      - chart-qa-tuned
+      - none
+
+  # ---------------------------------------------------------------------------
+  # 1.6 OCR engines and consensus
+  # ---------------------------------------------------------------------------
+  OcrEngine:
+    type: string
+    enum: [tesseract, paddleocr, surya, easyocr]
+
+  OcrConfidenceState:
+    type: string
+    enum: [ocr-high-confidence, ocr-quorum, ocr-low-confidence]
+
+  # ---------------------------------------------------------------------------
+  # 1.7 Reversible Unicode normalization kinds
+  # ---------------------------------------------------------------------------
+  NormalizationKind:
+    type: string
+    enum:
+      - unicode-nfc
+      - soft-hyphen-removed
+      - ligature-decomposed
+      - non-breaking-space-normalized
+      - smart-quote-normalized
+      - hyphen-line-break-rejoined
+      - en-dash-range-preserved
+      - em-dash-preserved
+      - cid-glyph-mapped
+      - cid-glyph-orphan          # no ToUnicode mapping; OCR fallback required
+
+  # ---------------------------------------------------------------------------
+  # 1.8 Flagged-item categories (queue handoff)
+  # ---------------------------------------------------------------------------
+  FlaggedKind:
+    type: string
+    enum:
+      - disputed-layout
+      - text-disputed
+      - cell-disputed
+      - engine-quorum-failure
+      - header-alignment-failure
+      - enum-violation                 # COR / LOE outside closed enum in a recommendation box
+      - schema-partial-match
+      - footnote-orphan
+      - hyphen-uncertain
+      - unit-mismatch
+      - caption-orphan
+      - flowchart-disputed
+      - chart-discrepancy
+      - ocr-low-confidence
+      - cid-glyph-orphan
+      - supportive-multi-bind
+      - header-unmapped
+      - page-split-table
+
+  FlaggedSeverity:
+    type: string
+    enum: [info, warning, blocking]
+    description: >
+      `blocking` flags prevent the affected region from advancing to Phase 3.
+      Any flag touching a recommendation row, COR, LOE, threshold, drug, or
+      population scope is `blocking` regardless of category.
+
+  ResolutionState:
+    type: string
+    enum: [open, in-review, resolved-accept, resolved-edit, resolved-escalate]
+
+# -----------------------------------------------------------------------------
+# 2. STRUCTURED TYPES
+# -----------------------------------------------------------------------------
+
+  # ---------------------------------------------------------------------------
+  # 2.1 BBox — bounding box (PDF user-space units)
+  # ---------------------------------------------------------------------------
+  BBox:
+    type: array
+    minItems: 4
+    maxItems: 4
+    items: { type: number }
+    description: "[x0, y0, x1, y1] in PDF user-space units (origin lower-left per PDF convention)."
+
+  # ---------------------------------------------------------------------------
+  # 2.2 PageSize
+  # ---------------------------------------------------------------------------
+  PageSize:
+    type: object
+    additionalProperties: false
+    required: [w, h]
+    properties:
+      w: { type: number, exclusiveMinimum: 0 }
+      h: { type: number, exclusiveMinimum: 0 }
+
+  # ---------------------------------------------------------------------------
+  # 2.3 ColumnPolygon
+  # ---------------------------------------------------------------------------
+  ColumnPolygon:
+    type: object
+    additionalProperties: false
+    required: [column_index, bbox]
+    properties:
+      column_index: { type: integer, minimum: 0 }
+      bbox: { $ref: "#/$defs/BBox" }
+
+  # ---------------------------------------------------------------------------
+  # 2.4 NormalizationLog
+  # ---------------------------------------------------------------------------
+  NormalizationLog:
+    type: object
+    additionalProperties: false
+    required: [nfc_applied, transforms]
+    properties:
+      nfc_applied: { type: boolean }
+      transforms:
+        type: array
+        items:
+          type: object
+          additionalProperties: false
+          required: [kind, position, original, replacement]
+          properties:
+            kind:        { $ref: "#/$defs/NormalizationKind" }
+            position:    { type: integer, minimum: 0 }
+            original:    { type: string }
+            replacement: { type: string }
+            note:        { type: [string, "null"] }
+
+  # ---------------------------------------------------------------------------
+  # 2.5 CharSpan — links a text segment to its on-page geometry
+  # ---------------------------------------------------------------------------
+  CharSpan:
+    type: object
+    additionalProperties: false
+    required: [start, end, page, bbox]
+    properties:
+      start: { type: integer, minimum: 0 }
+      end:   { type: integer, minimum: 0 }
+      page:  { type: integer, minimum: 1 }
+      bbox:  { $ref: "#/$defs/BBox" }
+      font:
+        type: [string, "null"]
+        description: PostScript font name as embedded; null if undetectable.
+      size:        { type: [number, "null"], exclusiveMinimum: 0 }
+      is_superscript: { type: boolean, default: false }
+
+  # ---------------------------------------------------------------------------
+  # 2.6 EngineParse (per text engine)
+  # ---------------------------------------------------------------------------
+  EngineParseText:
+    type: object
+    additionalProperties: false
+    required: [engine, pin, text_nfc, similarity_to_consensus]
+    properties:
+      engine:                 { $ref: "#/$defs/TextEngine" }
+      pin:                    { type: string }
+      text_nfc:               { type: string }
+      similarity_to_consensus:
+        type: number
+        minimum: 0.0
+        maximum: 1.0
+
+  # ---------------------------------------------------------------------------
+  # 2.7 TextRegion content
+  # ---------------------------------------------------------------------------
+  TextRegionContent:
+    type: object
+    additionalProperties: false
+    required: [raw_utf8_nfc, char_spans, normalization_log, consensus]
+    properties:
+      raw_utf8_nfc:
+        type: string
+        description: Canonical region text (NFC). The reversible normalization log restores the original glyph stream.
+      char_spans:
+        type: array
+        minItems: 1
+        items: { $ref: "#/$defs/CharSpan" }
+      footnote_refs:
+        type: array
+        items: { type: string, pattern: "^fn-[0-9]+-[0-9]+$" }
+        description: Resolved footnote IDs; superscripts that cannot be resolved go to flagged_items as `footnote-orphan`.
+      normalization_log: { $ref: "#/$defs/NormalizationLog" }
+      consensus:
+        type: object
+        additionalProperties: false
+        required: [state, engines]
+        properties:
+          state:    { $ref: "#/$defs/TextConsensusState" }
+          engines:
+            type: array
+            minItems: 2
+            items: { $ref: "#/$defs/EngineParseText" }
+          pairwise_min_similarity:
+            type: number
+            minimum: 0.0
+            maximum: 1.0
+            description: Lowest pairwise similarity across the configured engines.
+
+  # ---------------------------------------------------------------------------
+  # 2.8 TableCell
+  # ---------------------------------------------------------------------------
+  TableCell:
+    type: object
+    additionalProperties: false
+    required: [row, col, bbox, value_consensus, consensus_state]
+    properties:
+      row: { type: integer, minimum: 0 }
+      col: { type: integer, minimum: 0 }
+      bbox: { $ref: "#/$defs/BBox" }
+      value_consensus:
+        type: string
+        description: Canonical, NFC-normalized, whitespace-collapsed cell value.
+      value_variants:
+        type: array
+        items:
+          type: object
+          additionalProperties: false
+          required: [engine, value, bbox]
+          properties:
+            engine: { $ref: "#/$defs/TableEngine" }
+            value:  { type: string }
+            bbox:   { $ref: "#/$defs/BBox" }
+            confidence:
+              type: [number, "null"]
+              minimum: 0.0
+              maximum: 1.0
+      consensus_state: { $ref: "#/$defs/CellConsensusState" }
+      cell_span:
+        type: [object, "null"]
+        additionalProperties: false
+        required: [row_start, row_end, col_start, col_end]
+        properties:
+          row_start: { type: integer, minimum: 0 }
+          row_end:   { type: integer, minimum: 0 }
+          col_start: { type: integer, minimum: 0 }
+          col_end:   { type: integer, minimum: 0 }
+        description: Merged-cell geometry; preserved verbatim, never flattened.
+      footnote_refs:
+        type: array
+        items: { type: string, pattern: "^fn-[0-9]+-[0-9]+$" }
+
+  # ---------------------------------------------------------------------------
+  # 2.9 TableRegion content
+  # ---------------------------------------------------------------------------
+  TableRegionContent:
+    type: object
+    additionalProperties: false
+    required: [headers, rows, schema_detected, engines_used]
+    properties:
+      headers:
+        type: array
+        minItems: 1
+        items:
+          type: object
+          additionalProperties: false
+          required: [col, bbox, value_consensus, consensus_state]
+          properties:
+            col:             { type: integer, minimum: 0 }
+            bbox:            { $ref: "#/$defs/BBox" }
+            value_consensus: { type: string }
+            consensus_state: { $ref: "#/$defs/CellConsensusState" }
+      rows:
+        type: array
+        items:
+          type: array
+          items: { $ref: "#/$defs/TableCell" }
+        description: rows[i][j] is the cell at row i, column j (after consensus).
+      schema_detected: { $ref: "#/$defs/TableSchemaDetected" }
+      engines_used:
+        type: array
+        minItems: 4
+        items: { $ref: "#/$defs/TableEngine" }
+        description: At least four engines required by `parse-acc-aha-recbox` G2.3-F.
+      recommendation_box_rows:
+        type: array
+        items: { $ref: "#/$defs/RecommendationBoxRow" }
+        description: >
+          Present only when schema_detected == "acc-aha-recommendation-box".
+          One entry per body row of the recommendation box, with COR/LOE/text
+          captured verbatim and validated against closed enums. These entries
+          are the direct input to `extract-recommendation-cor-loe`.
+
+  # ---------------------------------------------------------------------------
+  # 2.10 RecommendationBoxRow — the parse-time row record
+  # ---------------------------------------------------------------------------
+  RecommendationBoxRow:
+    type: object
+    additionalProperties: false
+    required:
+      - region_id
+      - row_index
+      - cor
+      - loe
+      - text_verbatim
+      - cell_bboxes
+      - char_spans
+      - section_path
+      - consensus_state
+      - parent_table_region_id
+      - normalization_log
+    properties:
+      region_id:
+        type: string
+        pattern: "^row-[0-9a-f]{16}$"
+        description: Deterministic; derived from (pdf_sha256, page, row_bbox).
+      row_index: { type: integer, minimum: 0 }
+      cor:
+        # Validated against acc-aha-grading.yaml at write-time. The schema lists
+        # the enum here for self-containment; the canonical source is
+        # schemas/acc-aha-grading.yaml.
+        type: string
+        enum: ["I", "IIa", "IIb", "III: No Benefit", "III: Harm"]
+      loe:
+        type: string
+        enum: ["A", "B-R", "B-NR", "C-LD", "C-EO"]
+      text_verbatim:
+        type: string
+        minLength: 1
+        description: NFC-normalized recommendation cell content; reversible transforms in normalization_log.
+      cell_bboxes:
+        type: object
+        additionalProperties: false
+        required: [cor, loe, recommendation]
+        properties:
+          cor:            { $ref: "#/$defs/BBox" }
+          loe:            { $ref: "#/$defs/BBox" }
+          recommendation: { $ref: "#/$defs/BBox" }
+      char_spans:
+        type: array
+        minItems: 1
+        items: { $ref: "#/$defs/CharSpan" }
+      footnote_refs:
+        type: array
+        items: { type: string, pattern: "^fn-[0-9]+-[0-9]+$" }
+      section_path:
+        type: array
+        minItems: 1
+        items: { type: string }
+      supportive_text_region_ids:
+        type: array
+        items: { type: string }
+        description: SAIR text-region IDs for the bound supportive-text block(s); never merged into text_verbatim.
+      consensus_state:
+        type: string
+        enum: [cell-consensus]
+        description: The recommendation-box channel admits only `cell-consensus` rows; anything else is held in flagged_items.
+      parent_table_region_id: { type: string }
+      normalization_log: { $ref: "#/$defs/NormalizationLog" }
+
+  # ---------------------------------------------------------------------------
+  # 2.11 FigureCaption
+  # ---------------------------------------------------------------------------
+  FigureCaption:
+    type: object
+    additionalProperties: false
+    required: [caption_id, region_id, number, text_nfc, bbox]
+    properties:
+      caption_id:
+        type: string
+        pattern: "^cap-[0-9]+-[0-9]+$"
+      region_id: { type: string }
+      number:    { type: string, description: "Figure number string as printed (e.g., '3', '3a')." }
+      text_nfc:  { type: string }
+      bbox:      { $ref: "#/$defs/BBox" }
+
+  # ---------------------------------------------------------------------------
+  # 2.12 FigureGraph (logic-bearing diagrams: flowcharts, algorithms)
+  # ---------------------------------------------------------------------------
+  FigureGraph:
+    type: object
+    additionalProperties: false
+    required: [nodes, edges, parsers]
+    properties:
+      nodes:
+        type: array
+        items:
+          type: object
+          additionalProperties: false
+          required: [id, shape, text_nfc, bbox]
+          properties:
+            id:       { type: string }
+            shape:    { type: string, enum: [rectangle, diamond, parallelogram, oval, circle, hexagon, other] }
+            text_nfc: { type: string }
+            bbox:     { $ref: "#/$defs/BBox" }
+      edges:
+        type: array
+        items:
+          type: object
+          additionalProperties: false
+          required: [source, target]
+          properties:
+            source:    { type: string }
+            target:    { type: string }
+            label_nfc: { type: [string, "null"] }
+            agreement: { type: number, minimum: 0.0, maximum: 1.0, description: "Agreement across independent parsers." }
+      parsers:
+        type: array
+        minItems: 2
+        items: { $ref: "#/$defs/FigureParser" }
+      awaiting_corroboration:
+        type: boolean
+        default: true
+        description: >
+          Logic-bearing figures NEVER feed CQL or CDS Hooks on their own. This
+          flag stays true until a body-text or recommendation-box anchor for
+          the same logic is found in Phase 3. See Parse Spec §2.4.4 hard rule.
+
+  # ---------------------------------------------------------------------------
+  # 2.13 FigureChartData (numeric figures: bar/line/scatter/forest)
+  # ---------------------------------------------------------------------------
+  FigureChartData:
+    type: object
+    additionalProperties: false
+    required: [axes, series, parsers]
+    properties:
+      axes:
+        type: object
+        additionalProperties: false
+        required: [x, y]
+        properties:
+          x:
+            type: object
+            additionalProperties: false
+            required: [label_nfc, scale]
+            properties:
+              label_nfc: { type: string }
+              scale:     { type: string, enum: [linear, log, categorical, time] }
+              units:
+                type: [string, "null"]
+                description: UCUM canonical form when applicable.
+          y:
+            type: object
+            additionalProperties: false
+            required: [label_nfc, scale]
+            properties:
+              label_nfc: { type: string }
+              scale:     { type: string, enum: [linear, log, categorical, time] }
+              units:     { type: [string, "null"] }
+      series:
+        type: array
+        items:
+          type: object
+          additionalProperties: false
+          required: [name, points]
+          properties:
+            name: { type: string }
+            points:
+              type: array
+              items:
+                type: object
+                additionalProperties: false
+                required: [x, y]
+                properties:
+                  x: { type: [number, string] }
+                  y: { type: [number, "null"] }
+                  ci_low:  { type: [number, "null"] }
+                  ci_high: { type: [number, "null"] }
+      parsers:
+        type: array
+        minItems: 1
+        items: { $ref: "#/$defs/FigureParser" }
+      cross_check:
+        type: object
+        additionalProperties: false
+        required: [matches_table_or_text]
+        properties:
+          matches_table_or_text:
+            type: boolean
+            description: True iff chart numerics agree with a table or text in the same section. False → `chart-discrepancy`.
+          discrepancy_note: { type: [string, "null"] }
+
+  # ---------------------------------------------------------------------------
+  # 2.14 FigureRegion content
+  # ---------------------------------------------------------------------------
+  FigureRegionContent:
+    type: object
+    additionalProperties: false
+    required: [file, type, dpi]
+    properties:
+      file:
+        type: string
+        description: Relative path to the rasterized figure (e.g., 'figures/12-2.png').
+      file_sha256: { type: string, pattern: "^[0-9a-f]{64}$" }
+      type:        { $ref: "#/$defs/FigureType" }
+      dpi:         { type: integer, enum: [300, 600] }
+      caption_id:  { type: [string, "null"] }
+      graph:       { $ref: "#/$defs/FigureGraph" }
+      chart_data:  { $ref: "#/$defs/FigureChartData" }
+      ocr_overlay:
+        type: [object, "null"]
+        additionalProperties: false
+        required: [confidence_min, engines]
+        properties:
+          confidence_min: { type: number, minimum: 0.0, maximum: 1.0 }
+          engines:
+            type: array
+            minItems: 2
+            items: { $ref: "#/$defs/OcrEngine" }
+
+  # ---------------------------------------------------------------------------
+  # 2.15 FootnoteRegion content
+  # ---------------------------------------------------------------------------
+  FootnoteRegionContent:
+    type: object
+    additionalProperties: false
+    required: [footnote_id, marker, text_nfc]
+    properties:
+      footnote_id:
+        type: string
+        pattern: "^fn-[0-9]+-[0-9]+$"
+        description: "Format: fn-<page>-<seq>."
+      marker:    { type: string, description: "Superscript marker as printed (e.g., '1', '*', 'a')." }
+      text_nfc:  { type: string }
+      reference_resolution:
+        type: [object, "null"]
+        additionalProperties: false
+        properties:
+          ref_id: { type: string }
+          doi:    { type: [string, "null"], pattern: "^10\\..+/.+$" }
+          pmid:   { type: [string, "null"], pattern: "^[0-9]+$" }
+
+  # ---------------------------------------------------------------------------
+  # 2.16 ChromeRegion content (headers, footers, page numbers, running titles)
+  # ---------------------------------------------------------------------------
+  ChromeRegionContent:
+    type: object
+    additionalProperties: false
+    required: [text_nfc, kind]
+    properties:
+      text_nfc: { type: string }
+      kind:
+        type: string
+        enum: [header, footer, page-number, running-title, watermark, other]
+
+  # ---------------------------------------------------------------------------
+  # 2.17 Region — discriminated union by class
+  # ---------------------------------------------------------------------------
+  Region:
+    type: object
+    additionalProperties: false
+    required:
+      - region_id
+      - class
+      - bbox
+      - reading_order_index
+      - provenance
+    properties:
+      region_id:
+        type: string
+        pattern: "^r-[0-9]+-[0-9]{3,}$"
+        description: "Format: r-<page>-<zero-padded-index>."
+      class:               { $ref: "#/$defs/RegionClass" }
+      bbox:                { $ref: "#/$defs/BBox" }
+      reading_order_index: { type: integer, minimum: 0 }
+      column_index:        { type: [integer, "null"], minimum: 0 }
+      content:
+        oneOf:
+          - $ref: "#/$defs/TextRegionContent"
+          - $ref: "#/$defs/TableRegionContent"
+          - $ref: "#/$defs/FigureRegionContent"
+          - $ref: "#/$defs/FootnoteRegionContent"
+          - $ref: "#/$defs/ChromeRegionContent"
+        description: >
+          The content shape MUST match the region class:
+            class=text|list|title|heading|equation        → TextRegionContent
+            class=table                                    → TableRegionContent
+            class=figure                                   → FigureRegionContent
+            class=footnote                                 → FootnoteRegionContent
+            class=header|footer|page-number|running-title|chrome → ChromeRegionContent
+            class=caption                                  → TextRegionContent (with caption_pairing)
+          Validators MUST enforce the matrix.
+      caption_pairing:
+        type: [object, "null"]
+        additionalProperties: false
+        required: [caption_id, target_figure_region_id]
+        properties:
+          caption_id:              { type: string }
+          target_figure_region_id: { type: string }
+      provenance:
+        type: object
+        additionalProperties: false
+        required: [layout_consensus, extractor_consensus]
+        properties:
+          layout_consensus:
+            type: object
+            additionalProperties: false
+            required: [state, detectors]
+            properties:
+              state: { type: string, enum: [agree, resolved, disputed] }
+              detectors:
+                type: array
+                minItems: 2
+                items:
+                  type: object
+                  additionalProperties: false
+                  required: [name, pin, iou]
+                  properties:
+                    name: { type: string }
+                    pin:  { type: string }
+                    iou:  { type: number, minimum: 0.0, maximum: 1.0 }
+          extractor_consensus:
+            type: string
+            enum:
+              - text-consensus
+              - cell-consensus
+              - figure-parsed
+              - footnote-attached
+              - chrome-detected
+              - escalated-and-resolved
+              - escalated-pending
+
+  # ---------------------------------------------------------------------------
+  # 2.18 Page
+  # ---------------------------------------------------------------------------
+  Page:
+    type: object
+    additionalProperties: false
+    required: [page_number, size, column_model, regions]
+    properties:
+      page_number:  { type: integer, minimum: 1 }
+      size:         { $ref: "#/$defs/PageSize" }
+      column_model: { $ref: "#/$defs/ColumnModel" }
+      column_polygons:
+        type: array
+        items: { $ref: "#/$defs/ColumnPolygon" }
+      reading_order:
+        type: object
+        additionalProperties: false
+        required: [primary_method, region_ids_in_order]
+        properties:
+          primary_method:        { $ref: "#/$defs/ReadingOrderMethod" }
+          region_ids_in_order:
+            type: array
+            items: { type: string }
+          alternative_methods:
+            type: array
+            items:
+              type: object
+              additionalProperties: false
+              required: [method, transitions_disagreement_pct]
+              properties:
+                method:                       { $ref: "#/$defs/ReadingOrderMethod" }
+                transitions_disagreement_pct: { type: number, minimum: 0.0, maximum: 100.0 }
+      regions:
+        type: array
+        items: { $ref: "#/$defs/Region" }
+      raster:
+        type: object
+        additionalProperties: false
+        required: [path_300dpi, sha256_300dpi]
+        properties:
+          path_300dpi:    { type: string }
+          sha256_300dpi:  { type: string, pattern: "^[0-9a-f]{64}$" }
+          path_600dpi:    { type: [string, "null"] }
+          sha256_600dpi:  { type: [string, "null"], pattern: "^[0-9a-f]{64}$" }
+      tagged_pdf_structtree_present: { type: boolean, default: false }
+
+  # ---------------------------------------------------------------------------
+  # 2.19 FlaggedItem (queue handoff)
+  # ---------------------------------------------------------------------------
+  FlaggedItem:
+    type: object
+    additionalProperties: false
+    required: [item_id, kind, severity, region_id, opened_at, resolution_state]
+    properties:
+      item_id:         { type: string, pattern: "^flag-[0-9a-f]{16}$" }
+      kind:            { $ref: "#/$defs/FlaggedKind" }
+      severity:        { $ref: "#/$defs/FlaggedSeverity" }
+      region_id:       { type: string }
+      page:            { type: integer, minimum: 1 }
+      opened_at:       { type: string, format: date-time }
+      reason:          { type: string, minLength: 1 }
+      decision_required:
+        type: array
+        minItems: 1
+        items: { type: string }
+      crop_path_600dpi: { type: string }
+      candidate_parses:
+        type: array
+        items:
+          type: object
+          additionalProperties: false
+          required: [engine, value]
+          properties:
+            engine:     { type: string }
+            value:      { type: string }
+            confidence: { type: [number, "null"], minimum: 0.0, maximum: 1.0 }
+      resolution_state: { $ref: "#/$defs/ResolutionState" }
+      resolution:
+        type: [object, "null"]
+        additionalProperties: false
+        required: [resolved_at, decision, reviewer_ids, prov_activity_id]
+        properties:
+          resolved_at:      { type: string, format: date-time }
+          decision:         { type: string }
+          rationale:        { type: string }
+          reviewer_ids:
+            type: array
+            minItems: 2
+            maxItems: 4
+            items: { type: string }
+            description: Two-person rule for any clinical-content resolution.
+          before_value:     { type: [string, "null"] }
+          after_value:      { type: [string, "null"] }
+          prov_activity_id: { type: string }
+
+  # ---------------------------------------------------------------------------
+  # 2.20 ToolsLock
+  # ---------------------------------------------------------------------------
+  ToolsLock:
+    type: object
+    additionalProperties: false
+    required: [lock_sha, items]
+    properties:
+      lock_sha: { type: string, pattern: "^[0-9a-f]{64}$" }
+      items:
+        type: array
+        minItems: 1
+        items:
+          type: object
+          additionalProperties: false
+          required: [name, pin]
+          properties:
+            name: { type: string }
+            pin:  { type: string }
+            kind:
+              type: string
+              enum: [pdf-parser, table-engine, layout-detector, vlm, ocr, llm, fhir-validator, ig-builder, terminology-server, other]
+            deterministic:
+              type: boolean
+              description: If false, this tool cannot be the SOLE basis for any consensus state.
+
+  # ---------------------------------------------------------------------------
+  # 2.21 RunRecord (per-skill invocation log)
+  # ---------------------------------------------------------------------------
+  RunRecord:
+    type: object
+    additionalProperties: false
+    required: [skill, started_at, ended_at, parameters, counts, gates]
+    properties:
+      skill:
+        type: string
+        enum:
+          - parse-prepare-pdf
+          - parse-detect-layout
+          - parse-extract-text
+          - parse-acc-aha-recbox
+          - parse-extract-figures
+          - parse-ocr-fallback
+          - parse-reconcile-queue
+      started_at: { type: string, format: date-time }
+      ended_at:   { type: string, format: date-time }
+      parameters:
+        type: object
+        additionalProperties: true
+      counts:
+        type: object
+        additionalProperties: true
+        description: Free-form counts (regions emitted, cells reconciled, queue entries opened, etc.).
+      gates:
+        type: array
+        items:
+          type: object
+          additionalProperties: false
+          required: [gate_id, status]
+          properties:
+            gate_id: { type: string }
+            status:  { type: string, enum: [PASS, FAIL] }
+            note:    { type: [string, "null"] }
+      operator_id: { type: string }
+
+# -----------------------------------------------------------------------------
+# 3. ROOT TYPE — SAIR document
+# -----------------------------------------------------------------------------
+type: object
+additionalProperties: false
+required:
+  - schema_version
+  - document_id
+  - source
+  - tools_lock
+  - pages
+  - footnotes_index
+  - flagged_items
+  - run
+  - fixity
+  - guideline_manifest_ref
+properties:
+
+  schema_version:
+    type: string
+    const: "1.0.0"
+
+  guideline_manifest_ref:
+    type: string
+    description: Pointer to `schemas/guideline-manifest-hbp-2025.yaml` instance for this run.
+
+  document_id:
+    type: string
+    format: uuid
+
+  # ---------------------------------------------------------------------------
+  # 3.1 Source identity
+  # ---------------------------------------------------------------------------
+  source:
+    type: object
+    additionalProperties: false
+    required: [pdf_sha256, pdf_path, doi, publisher, publication_date, document_role]
+    properties:
+      pdf_sha256:        { type: string, pattern: "^[0-9a-f]{64}$" }
+      pdf_path:          { type: string }
+      doi:               { type: string, pattern: "^10\\..+/.+$" }
+      url:               { type: [string, "null"], format: uri }
+      publisher:         { type: string }
+      publication_date:  { type: string, format: date }
+      document_role:
+        type: string
+        enum: [main-guideline, executive-summary, supplement, predecessor-2017]
+      page_count:        { type: integer, minimum: 1 }
+
+  # ---------------------------------------------------------------------------
+  # 3.2 Tools lock (version pinning)
+  # ---------------------------------------------------------------------------
+  tools_lock: { $ref: "#/$defs/ToolsLock" }
+
+  # ---------------------------------------------------------------------------
+  # 3.3 Pages
+  # ---------------------------------------------------------------------------
+  pages:
+    type: array
+    minItems: 1
+    items: { $ref: "#/$defs/Page" }
+
+  # ---------------------------------------------------------------------------
+  # 3.4 Footnotes index (cross-page resolved)
+  # ---------------------------------------------------------------------------
+  footnotes_index:
+    type: object
+    additionalProperties:
+      type: object
+      additionalProperties: false
+      required: [footnote_id, region_id, page]
+      properties:
+        footnote_id: { type: string, pattern: "^fn-[0-9]+-[0-9]+$" }
+        region_id:   { type: string }
+        page:        { type: integer, minimum: 1 }
+        text_nfc:    { type: string }
+    description: >
+      Map keyed by footnote_id for O(1) resolution from any superscript.
+      Orphaned superscripts go to flagged_items as `footnote-orphan`.
+
+  # ---------------------------------------------------------------------------
+  # 3.5 Flagged items (queue)
+  # ---------------------------------------------------------------------------
+  flagged_items:
+    type: array
+    items: { $ref: "#/$defs/FlaggedItem" }
+
+  # ---------------------------------------------------------------------------
+  # 3.6 Run records (one per skill invocation that touched this SAIR)
+  # ---------------------------------------------------------------------------
+  run:
+    type: object
+    additionalProperties: false
+    required: [run_id, started_at, steps]
+    properties:
+      run_id:     { type: string, format: uuid }
+      started_at: { type: string, format: date-time }
+      ended_at:   { type: [string, "null"], format: date-time }
+      steps:
+        type: array
+        items: { $ref: "#/$defs/RunRecord" }
+
+  # ---------------------------------------------------------------------------
+  # 3.7 Fixity (self-fingerprint)
+  # ---------------------------------------------------------------------------
+  fixity:
+    type: object
+    additionalProperties: false
+    required: [sair_sha256, computed_at, canonical_form]
+    properties:
+      sair_sha256:    { type: string, pattern: "^[0-9a-f]{64}$" }
+      computed_at:    { type: string, format: date-time }
+      canonical_form:
+        type: string
+        enum: [json-canonical-rfc8785]
+        description: SAIR is canonicalized per RFC 8785 (JCS) before hashing.
+
+# -----------------------------------------------------------------------------
+# 4. CROSS-FIELD INVARIANTS (validators MUST enforce)
+# -----------------------------------------------------------------------------
+# JSON Schema cannot express all of these directly; the framework's validator
+# (`aiwg-cpg-htn validate sair`) implements them. Each invariant is a
+# release-blocker if violated.
+# -----------------------------------------------------------------------------
+
+invariants:
+
+  - id: SAIR-INV-01
+    description: >
+      Every region_id referenced anywhere in the document (caption_pairing,
+      flagged_items.region_id, footnotes_index.region_id, page.reading_order.region_ids_in_order,
+      RecommendationBoxRow.parent_table_region_id, RecommendationBoxRow.supportive_text_region_ids)
+      MUST exist in pages[].regions[].
+
+  - id: SAIR-INV-02
+    description: >
+      Every Region.content shape MUST match Region.class per the matrix in §2.17.
+      Mismatch is a release blocker.
+
+  - id: SAIR-INV-03
+    description: >
+      For every TextRegionContent, every CharSpan.start/end pair MUST satisfy
+      `0 <= start < end <= len(raw_utf8_nfc)`, and the union of CharSpan ranges
+      MUST cover raw_utf8_nfc without gaps.
+
+  - id: SAIR-INV-04
+    description: >
+      For every TableRegionContent with schema_detected == "acc-aha-recommendation-box",
+      `engines_used` MUST contain at least four members from TableEngine, AND
+      `recommendation_box_rows` MUST be non-empty, AND every row MUST have
+      consensus_state == "cell-consensus".
+
+  - id: SAIR-INV-05
+    description: >
+      Every RecommendationBoxRow.cor MUST be in the AccAhaCOR enum and every
+      RecommendationBoxRow.loe MUST be in the AccAhaLOE enum, exact verbatim.
+      Auto-correction is forbidden; deviations belong in flagged_items as
+      `enum-violation`.
+
+  - id: SAIR-INV-06
+    description: >
+      Every footnote_ref string in any region MUST resolve via footnotes_index.
+      Unresolved references MUST appear in flagged_items as `footnote-orphan`.
+
+  - id: SAIR-INV-07
+    description: >
+      For every Region.class == "caption", caption_pairing MUST be non-null and
+      `target_figure_region_id` MUST point to a Region with class == "figure"
+      OR the orphan MUST appear in flagged_items as `caption-orphan`.
+
+  - id: SAIR-INV-08
+    description: >
+      For every FigureRegionContent with type ∈ {flowchart, algorithm-diagram},
+      a FigureGraph MUST be present, parsers MUST contain at least two members,
+      and `awaiting_corroboration` MUST be true at SAIR write time.
+      Logic-bearing figures NEVER feed CQL or CDS Hooks on their own.
+
+  - id: SAIR-INV-09
+    description: >
+      For every FigureRegionContent with type ∈ {bar-chart, line-chart, scatter-chart, forest-plot},
+      FigureChartData MUST be present and `cross_check.matches_table_or_text` MUST
+      be set. False values open `chart-discrepancy` in flagged_items.
+
+  - id: SAIR-INV-10
+    description: >
+      For every region whose Region.provenance.extractor_consensus is anything
+      other than `*-consensus`, `figure-parsed`, `footnote-attached`, or
+      `chrome-detected`, a corresponding FlaggedItem MUST exist with the same
+      region_id and a non-`resolved-*` resolution_state at SAIR write time, OR
+      the consensus value MUST be `escalated-and-resolved` with a populated
+      FlaggedItem.resolution.
+
+  - id: SAIR-INV-11
+    description: >
+      Every FlaggedItem.severity == "blocking" item touching a recommendation
+      row, COR, LOE, threshold, drug, or population scope MUST have
+      resolution_state in {open, in-review} or a resolution with
+      `reviewer_ids` of length >= 2 (two-person rule).
+
+  - id: SAIR-INV-12
+    description: >
+      Reading-order region_ids_in_order MUST exclude all chrome-class regions
+      (header, footer, page-number, running-title, chrome). Chrome regions are
+      anchored for audit but never enter the body reading order.
+
+  - id: SAIR-INV-13
+    description: >
+      ToolsLock.lock_sha MUST equal SHA-256 of the canonicalized items array.
+      Any tool with `deterministic == false` MUST NOT be the sole engine in any
+      consensus state.
+
+  - id: SAIR-INV-14
+    description: >
+      `fixity.sair_sha256` MUST equal SHA-256 of the canonicalized SAIR document
+      with `fixity` field excluded, per RFC 8785. The hash MUST be deterministic
+      across re-runs given identical inputs and tools_lock.
+
+  - id: SAIR-INV-15
+    description: >
+      Every page.regions[].bbox MUST lie within [0, 0, page.size.w, page.size.h]
+      with a tolerance of 1.0 user-space unit for floating-point rounding.
+
+  - id: SAIR-INV-16
+    description: >
+      For every TableCell, value_variants MUST contain at least four entries
+      whenever the parent TableRegionContent.schema_detected ==
+      "acc-aha-recommendation-box". Cells with fewer variants cannot reach
+      `cell-consensus` in a recommendation box.
+
+  - id: SAIR-INV-17
+    description: >
+      For every RecommendationBoxRow, char_spans MUST cover text_verbatim
+      contiguously (no gaps, no overlaps), and the union of CharSpan.bbox MUST
+      lie within cell_bboxes.recommendation (with 1.0-unit tolerance).
+
+  - id: SAIR-INV-18
+    description: >
+      Page.tagged_pdf_structtree_present == true implies that every body region
+      on that page has a corresponding StructTree element id captured in
+      Region.provenance.layout_consensus.detectors with name == "tagged-pdf-structtree".
+
+  - id: SAIR-INV-19
+    description: >
+      No two regions on the same page may share a region_id. region_id MUST be
+      deterministic from (pdf_sha256, page, bbox, class).
+
+  - id: SAIR-INV-20
+    description: >
+      `source.document_role == "predecessor-2017"` SAIR documents MUST NOT be
+      consumed by Phase-3 clinical extraction. Predecessor SAIRs are advisory
+      inputs to `predecessor-map-2017` only.
+
+# =============================================================================
+# 5. WORKED EXAMPLES (shape-correctness fixtures)
+# -----------------------------------------------------------------------------
+# These examples are illustrative shape-correctness fixtures. EVERY field whose
+# value can ONLY come from the published source PDF is marked `HUMAN_FILL` with
+# explicit instructions describing what must be sourced and how. The pipeline
+# refuses to operate on documents containing `HUMAN_FILL` tokens.
+#
+# Three examples are provided:
+#   5.1 A two-column body text region with NFC normalization log
+#   5.2 An ACC/AHA recommendation-box table with one body row
+#   5.3 A flowchart figure with a parsed graph awaiting corroboration
+# =============================================================================
+
+examples:
+
+  # ---------------------------------------------------------------------------
+  # 5.1 Body text region (two-column page, with hyphenation rejoin)
+  # ---------------------------------------------------------------------------
+  - schema_version: "1.0.0"
+    guideline_manifest_ref: "guideline-manifest-hbp-2025.v1.0.0+ACC-AHA-2025+US+HUMAN_FILL_DATE.yaml"
+    document_id: "HUMAN_FILL_UUID"
+
+    source:
+      pdf_sha256: "HUMAN_FILL_64HEX"
+      pdf_path: "work/HUMAN_FILL_RUN_ID/02-normalized.pdf"
+      doi: "HUMAN_FILL_DOI"
+      url: "HUMAN_FILL_URL"
+      publisher: "ACC/AHA"
+      publication_date: "HUMAN_FILL_ISO_DATE"
+      document_role: main-guideline
+      page_count: 0  # HUMAN_FILL: integer page count
+
+    tools_lock:
+      lock_sha: "HUMAN_FILL_64HEX"
+      items:
+        - { name: "qpdf",          pin: "HUMAN_FILL_PIN", kind: pdf-parser,       deterministic: true }
+        - { name: "pymupdf",       pin: "HUMAN_FILL_PIN", kind: pdf-parser,       deterministic: true }
+        - { name: "pdfminer.six",  pin: "HUMAN_FILL_PIN", kind: pdf-parser,       deterministic: true }
+        - { name: "marker",        pin: "HUMAN_FILL_PIN", kind: pdf-parser,       deterministic: false }
+        - { name: "publaynet-d2",  pin: "HUMAN_FILL_PIN", kind: layout-detector,  deterministic: true }
+        - { name: "layoutlmv3",    pin: "HUMAN_FILL_PIN", kind: layout-detector,  deterministic: false }
+
+    pages:
+      - page_number: 0          # HUMAN_FILL
+        size: { w: 0, h: 0 }    # HUMAN_FILL: PDF page size in user-space units
+        column_model: "2col"
+        column_polygons:
+          - column_index: 0
+            bbox: [0, 0, 0, 0]  # HUMAN_FILL
+          - column_index: 1
+            bbox: [0, 0, 0, 0]  # HUMAN_FILL
+        reading_order:
+          primary_method: xy-cut
+          region_ids_in_order:
+            - "r-HUMAN_FILL-001"
+          alternative_methods:
+            - { method: layoutreader, transitions_disagreement_pct: 0.0 }
+        regions:
+          - region_id: "r-HUMAN_FILL-001"
+            class: text
+            bbox: [0, 0, 0, 0]  # HUMAN_FILL
+            reading_order_index: 0
+            column_index: 0
+            content:
+              raw_utf8_nfc: |
+                HUMAN_FILL: Verbatim NFC-normalized body text from the source
+                page. Preserve internal whitespace; reversible transforms
+                (e.g., soft-hyphen removal at line breaks, ligature
+                decomposition) are recorded in normalization_log below.
+              char_spans:
+                - start: 0
+                  end:   0    # HUMAN_FILL: must cover raw_utf8_nfc contiguously
+                  page:  0    # HUMAN_FILL
+                  bbox:  [0, 0, 0, 0]   # HUMAN_FILL
+                  font:  null
+                  size:  null
+                  is_superscript: false
+              footnote_refs: []
+              normalization_log:
+                nfc_applied: true
+                transforms:
+                  - kind: hyphen-line-break-rejoined
+                    position: 0          # HUMAN_FILL
+                    original: "HUMAN_FILL: e.g., 'hyper-\\ntension'"
+                    replacement: "HUMAN_FILL: e.g., 'hypertension'"
+                    note: "Joined token validated against medical lexicon."
+              consensus:
+                state: text-consensus
+                pairwise_min_similarity: 0.99
+                engines:
+                  - { engine: pymupdf-glyph, pin: "HUMAN_FILL_PIN", text_nfc: "HUMAN_FILL", similarity_to_consensus: 1.00 }
+                  - { engine: pdfminer-six,  pin: "HUMAN_FILL_PIN", text_nfc: "HUMAN_FILL", similarity_to_consensus: 0.99 }
+                  - { engine: marker,        pin: "HUMAN_FILL_PIN", text_nfc: "HUMAN_FILL", similarity_to_consensus: 0.99 }
+            provenance:
+              layout_consensus:
+                state: agree
+                detectors:
+                  - { name: publaynet-d2, pin: "HUMAN_FILL_PIN", iou: 0.95 }
+                  - { name: layoutlmv3,   pin: "HUMAN_FILL_PIN", iou: 0.95 }
+              extractor_consensus: text-consensus
+        raster:
+          path_300dpi: "work/HUMAN_FILL_RUN_ID/03-pages-300dpi/page-0001.png"
+          sha256_300dpi: "HUMAN_FILL_64HEX"
+          path_600dpi: null
+          sha256_600dpi: null
+        tagged_pdf_structtree_present: false
+
+    footnotes_index: {}
+
+    flagged_items: []
+
+    run:
+      run_id: "HUMAN_FILL_UUID"
+      started_at: "HUMAN_FILL_ISO_DATETIME"
+      ended_at: "HUMAN_FILL_ISO_DATETIME"
+      steps:
+        - skill: parse-extract-text
+          started_at: "HUMAN_FILL_ISO_DATETIME"
+          ended_at:   "HUMAN_FILL_ISO_DATETIME"
+          parameters: { dpi: 300 }
+          counts:     { regions_emitted: 1 }
+          gates:
+            - { gate_id: "G2-A", status: PASS }
+            - { gate_id: "G2-E", status: PASS }
+          operator_id: "HUMAN_FILL"
+
+    fixity:
+      sair_sha256: "HUMAN_FILL_64HEX"
+      computed_at: "HUMAN_FILL_ISO_DATETIME"
+      canonical_form: json-canonical-rfc8785
+
+  # ---------------------------------------------------------------------------
+  # 5.2 ACC/AHA recommendation-box table (one body row, cell-consensus)
+  # ---------------------------------------------------------------------------
+  - schema_version: "1.0.0"
+    guideline_manifest_ref: "guideline-manifest-hbp-2025.v1.0.0+ACC-AHA-2025+US+HUMAN_FILL_DATE.yaml"
+    document_id: "HUMAN_FILL_UUID"
+
+    source:
+      pdf_sha256: "HUMAN_FILL_64HEX"
+      pdf_path: "work/HUMAN_FILL_RUN_ID/02-normalized.pdf"
+      doi: "HUMAN_FILL_DOI"
+      url: "HUMAN_FILL_URL"
+      publisher: "ACC/AHA"
+      publication_date: "HUMAN_FILL_ISO_DATE"
+      document_role: main-guideline
+      page_count: 0   # HUMAN_FILL
+
+    tools_lock:
+      lock_sha: "HUMAN_FILL_64HEX"
+      items:
+        - { name: "camelot",     pin: "HUMAN_FILL_PIN", kind: table-engine, deterministic: true }
+        - { name: "tabula",      pin: "HUMAN_FILL_PIN", kind: table-engine, deterministic: true }
+        - { name: "pdfplumber",  pin: "HUMAN_FILL_PIN", kind: table-engine, deterministic: true }
+        - { name: "tablemaster", pin: "HUMAN_FILL_PIN", kind: vlm,          deterministic: false }
+        - { name: "donut-table", pin: "HUMAN_FILL_PIN", kind: vlm,          deterministic: false }
+
+    pages:
+      - page_number: 0          # HUMAN_FILL
+        size: { w: 0, h: 0 }    # HUMAN_FILL
+        column_model: "1col"
+        reading_order:
+          primary_method: xy-cut
+          region_ids_in_order:
+            - "r-HUMAN_FILL-007"   # the table region
+            - "r-HUMAN_FILL-008"   # the supportive-text region following the box
+        regions:
+          # The recommendation-box table region
+          - region_id: "r-HUMAN_FILL-007"
+            class: table
+            bbox: [0, 0, 0, 0]   # HUMAN_FILL
+            reading_order_index: 7
+            column_index: 0
+            content:
+              headers:
+                - { col: 0, bbox: [0,0,0,0], value_consensus: "COR",            consensus_state: cell-consensus }
+                - { col: 1, bbox: [0,0,0,0], value_consensus: "LOE",            consensus_state: cell-consensus }
+                - { col: 2, bbox: [0,0,0,0], value_consensus: "Recommendations", consensus_state: cell-consensus }
+              rows:
+                - - row: 0
+                    col: 0
+                    bbox: [0,0,0,0]  # HUMAN_FILL: COR cell bbox
+                    value_consensus: "HUMAN_FILL_COR_VERBATIM_FROM_BOX"   # one of: I, IIa, IIb, III: No Benefit, III: Harm
+                    consensus_state: cell-consensus
+                    value_variants:
+                      - { engine: camelot-lattice,  value: "HUMAN_FILL", bbox: [0,0,0,0], confidence: null }
+                      - { engine: camelot-stream,   value: "HUMAN_FILL", bbox: [0,0,0,0], confidence: null }
+                      - { engine: tabula-lattice,   value: "HUMAN_FILL", bbox: [0,0,0,0], confidence: null }
+                      - { engine: pdfplumber,       value: "HUMAN_FILL", bbox: [0,0,0,0], confidence: null }
+                      - { engine: vlm-tablemaster,  value: "HUMAN_FILL", bbox: [0,0,0,0], confidence: 0.99 }
+                  - row: 0
+                    col: 1
+                    bbox: [0,0,0,0]
+                    value_consensus: "HUMAN_FILL_LOE_VERBATIM_FROM_BOX"   # one of: A, B-R, B-NR, C-LD, C-EO
+                    consensus_state: cell-consensus
+                  - row: 0
+                    col: 2
+                    bbox: [0,0,0,0]
+                    value_consensus: |
+                      HUMAN_FILL: Verbatim recommendation text from the source
+                      recommendation cell. NFC-normalized; reversible transforms
+                      recorded in the row-level normalization log below.
+                    consensus_state: cell-consensus
+              schema_detected: acc-aha-recommendation-box
+              engines_used:
+                - camelot-lattice
+                - camelot-stream
+                - tabula-lattice
+                - pdfplumber
+                - vlm-tablemaster
+              recommendation_box_rows:
+                - region_id: "row-HUMAN_FILL_16HEX"
+                  row_index: 0
+                  cor: "HUMAN_FILL_COR_VERBATIM_FROM_BOX"
+                  loe: "HUMAN_FILL_LOE_VERBATIM_FROM_BOX"
+                  text_verbatim: |
+                    HUMAN_FILL: Verbatim recommendation text exactly as printed.
+                  cell_bboxes:
+                    cor:            [0,0,0,0]
+                    loe:            [0,0,0,0]
+                    recommendation: [0,0,0,0]
+                  char_spans:
+                    - start: 0
+                      end:   0
+                      page:  0
+                      bbox:  [0,0,0,0]
+                  footnote_refs: []
+                  section_path:
+                    - "HUMAN_FILL: chapter heading"
+                    - "HUMAN_FILL: subsection heading"
+                  supportive_text_region_ids:
+                    - "r-HUMAN_FILL-008"
+                  consensus_state: cell-consensus
+                  parent_table_region_id: "r-HUMAN_FILL-007"
+                  normalization_log:
+                    nfc_applied: true
+                    transforms:
+                      - kind: unicode-nfc
+                        position: 0
+                        original: "HUMAN_FILL"
+                        replacement: "HUMAN_FILL"
+            provenance:
+              layout_consensus:
+                state: agree
+                detectors:
+                  - { name: publaynet-d2, pin: "HUMAN_FILL_PIN", iou: 0.95 }
+                  - { name: layoutlmv3,   pin: "HUMAN_FILL_PIN", iou: 0.93 }
+              extractor_consensus: cell-consensus
+
+          # The Recommendation-Specific Supportive Text region following the box
+          - region_id: "r-HUMAN_FILL-008"
+            class: text
+            bbox: [0, 0, 0, 0]
+            reading_order_index: 8
+            column_index: 0
+            content:
+              raw_utf8_nfc: |
+                HUMAN_FILL: Verbatim Recommendation-Specific Supportive Text
+                paragraph(s). Bound to the recommendation row above via
+                supportive_text_region_ids. NEVER merged into the
+                recommendation text_verbatim.
+              char_spans:
+                - start: 0
+                  end:   0
+                  page:  0
+                  bbox:  [0, 0, 0, 0]
+              footnote_refs: []
+              normalization_log:
+                nfc_applied: true
+                transforms: []
+              consensus:
+                state: text-consensus
+                pairwise_min_similarity: 0.99
+                engines:
+                  - { engine: pymupdf-glyph, pin: "HUMAN_FILL_PIN", text_nfc: "HUMAN_FILL", similarity_to_consensus: 1.00 }
+                  - { engine: pdfminer-six,  pin: "HUMAN_FILL_PIN", text_nfc: "HUMAN_FILL", similarity_to_consensus: 0.99 }
+                  - { engine: marker,        pin: "HUMAN_FILL_PIN", text_nfc: "HUMAN_FILL", similarity_to_consensus: 0.99 }
+            provenance:
+              layout_consensus:
+                state: agree
+                detectors:
+                  - { name: publaynet-d2, pin: "HUMAN_FILL_PIN", iou: 0.94 }
+                  - { name: layoutlmv3,   pin: "HUMAN_FILL_PIN", iou: 0.94 }
+              extractor_consensus: text-consensus
+        raster:
+          path_300dpi: "work/HUMAN_FILL_RUN_ID/03-pages-300dpi/page-0001.png"
+          sha256_300dpi: "HUMAN_FILL_64HEX"
+          path_600dpi: "work/HUMAN_FILL_RUN_ID/03-pages-600dpi/page-0001.png"
+          sha256_600dpi: "HUMAN_FILL_64HEX"
+        tagged_pdf_structtree_present: false
+
+    footnotes_index: {}
+
+    flagged_items: []
+
+    run:
+      run_id: "HUMAN_FILL_UUID"
+      started_at: "HUMAN_FILL_ISO_DATETIME"
+      ended_at:   "HUMAN_FILL_ISO_DATETIME"
+      steps:
+        - skill: parse-acc-aha-recbox
+          started_at: "HUMAN_FILL_ISO_DATETIME"
+          ended_at:   "HUMAN_FILL_ISO_DATETIME"
+          parameters: { dpi: 600, engines: [camelot-lattice, camelot-stream, tabula-lattice, pdfplumber, vlm-tablemaster] }
+          counts:     { recommendation_rows_emitted: 1, queue_entries_opened: 0 }
+          gates:
+            - { gate_id: "G2.3-A", status: PASS }
+            - { gate_id: "G2.3-B", status: PASS }
+            - { gate_id: "G2.3-C", status: PASS }
+            - { gate_id: "G2.3-D", status: PASS }
+            - { gate_id: "G2.3-E", status: PASS }
+            - { gate_id: "G2.3-F", status: PASS }
+            - { gate_id: "G2.3-G", status: PASS }
+          operator_id: "HUMAN_FILL"
+
+    fixity:
+      sair_sha256: "HUMAN_FILL_64HEX"
+      computed_at: "HUMAN_FILL_ISO_DATETIME"
+      canonical_form: json-canonical-rfc8785
+
+  # ---------------------------------------------------------------------------
+  # 5.3 Flowchart figure with parsed graph awaiting corroboration
+  # ---------------------------------------------------------------------------
+  - schema_version: "1.0.0"
+    guideline_manifest_ref: "guideline-manifest-hbp-2025.v1.0.0+ACC-AHA-2025+US+HUMAN_FILL_DATE.yaml"
+    document_id: "HUMAN_FILL_UUID"
+
+    source:
+      pdf_sha256: "HUMAN_FILL_64HEX"
+      pdf_path: "work/HUMAN_FILL_RUN_ID/02-normalized.pdf"
+      doi: "HUMAN_FILL_DOI"
+      url: "HUMAN_FILL_URL"
+      publisher: "ACC/AHA"
+      publication_date: "HUMAN_FILL_ISO_DATE"
+      document_role: main-guideline
+      page_count: 0  # HUMAN_FILL
+
+    tools_lock:
+      lock_sha: "HUMAN_FILL_64HEX"
+      items:
+        - { name: "opencv",        pin: "HUMAN_FILL_PIN", kind: other,  deterministic: true }
+        - { name: "pix2struct",    pin: "HUMAN_FILL_PIN", kind: vlm,    deterministic: false }
+        - { name: "florence-2",    pin: "HUMAN_FILL_PIN", kind: vlm,    deterministic: false }
+        - { name: "tesseract",     pin: "HUMAN_FILL_PIN", kind: ocr,    deterministic: true }
+        - { name: "paddleocr",     pin: "HUMAN_FILL_PIN", kind: ocr,    deterministic: true }
+
+    pages:
+      - page_number: 0
+        size: { w: 0, h: 0 }
+        column_model: "1col"
+        reading_order:
+          primary_method: layoutreader
+          region_ids_in_order:
+            - "r-HUMAN_FILL-002"   # caption
+            - "r-HUMAN_FILL-003"   # the figure
+        regions:
+          # Caption (read first per reading order on this page; its content is the caption text)
+          - region_id: "r-HUMAN_FILL-002"
+            class: caption
+            bbox: [0, 0, 0, 0]
+            reading_order_index: 0
+            column_index: 0
+            content:
+              raw_utf8_nfc: "HUMAN_FILL: e.g., 'Figure 5. Diagnostic algorithm for confirmed hypertension.'"
+              char_spans:
+                - start: 0
+                  end:   0
+                  page:  0
+                  bbox:  [0, 0, 0, 0]
+              footnote_refs: []
+              normalization_log: { nfc_applied: true, transforms: [] }
+              consensus:
+                state: text-consensus
+                pairwise_min_similarity: 0.99
+                engines:
+                  - { engine: pymupdf-glyph, pin: "HUMAN_FILL_PIN", text_nfc: "HUMAN_FILL", similarity_to_consensus: 1.00 }
+                  - { engine: pdfminer-six,  pin: "HUMAN_FILL_PIN", text_nfc: "HUMAN_FILL", similarity_to_consensus: 0.99 }
+            caption_pairing:
+              caption_id: "cap-HUMAN_FILL-1"
+              target_figure_region_id: "r-HUMAN_FILL-003"
+            provenance:
+              layout_consensus:
+                state: agree
+                detectors:
+                  - { name: publaynet-d2, pin: "HUMAN_FILL_PIN", iou: 0.97 }
+                  - { name: layoutlmv3,   pin: "HUMAN_FILL_PIN", iou: 0.97 }
+              extractor_consensus: text-consensus
+
+          # The figure
+          - region_id: "r-HUMAN_FILL-003"
+            class: figure
+            bbox: [0, 0, 0, 0]
+            reading_order_index: 1
+            column_index: 0
+            content:
+              file: "figures/HUMAN_FILL_PAGE-1.png"
+              file_sha256: "HUMAN_FILL_64HEX"
+              type: flowchart
+              dpi: 600
+              caption_id: "cap-HUMAN_FILL-1"
+              graph:
+                nodes:
+                  - id: "n1"
+                    shape: rectangle
+                    text_nfc: "HUMAN_FILL: node text exactly as in figure"
+                    bbox: [0, 0, 0, 0]
+                  - id: "n2"
+                    shape: diamond
+                    text_nfc: "HUMAN_FILL"
+                    bbox: [0, 0, 0, 0]
+                edges:
+                  - { source: "n1", target: "n2", label_nfc: null,                  agreement: 1.00 }
+                  - { source: "n2", target: "n1", label_nfc: "HUMAN_FILL: e.g., 'No'", agreement: 1.00 }
+                parsers:
+                  - opencv-shapes
+                  - vlm-pix2struct
+                  - vlm-florence-2
+                awaiting_corroboration: true   # logic-bearing; never feeds CQL/CDS Hooks alone
+              chart_data: null
+              ocr_overlay:
+                confidence_min: 0.95
+                engines: [tesseract, paddleocr]
+            provenance:
+              layout_consensus:
+                state: agree
+                detectors:
+                  - { name: publaynet-d2, pin: "HUMAN_FILL_PIN", iou: 0.96 }
+                  - { name: layoutlmv3,   pin: "HUMAN_FILL_PIN", iou: 0.95 }
+              extractor_consensus: figure-parsed
+        raster:
+          path_300dpi: "work/HUMAN_FILL_RUN_ID/03-pages-300dpi/page-0001.png"
+          sha256_300dpi: "HUMAN_FILL_64HEX"
+          path_600dpi: "work/HUMAN_FILL_RUN_ID/03-pages-600dpi/page-0001.png"
+          sha256_600dpi: "HUMAN_FILL_64HEX"
+        tagged_pdf_structtree_present: false
+
+    footnotes_index: {}
+
+    flagged_items: []
+
+    run:
+      run_id: "HUMAN_FILL_UUID"
+      started_at: "HUMAN_FILL_ISO_DATETIME"
+      ended_at:   "HUMAN_FILL_ISO_DATETIME"
+      steps:
+        - skill: parse-extract-figures
+          started_at: "HUMAN_FILL_ISO_DATETIME"
+          ended_at:   "HUMAN_FILL_ISO_DATETIME"
+          parameters: { dpi: 600 }
+          counts:     { figures_emitted: 1, flowcharts_parsed: 1 }
+          gates:
+            - { gate_id: "G2-C", status: PASS }
+          operator_id: "HUMAN_FILL"
+
+    fixity:
+      sair_sha256: "HUMAN_FILL_64HEX"
+      computed_at: "HUMAN_FILL_ISO_DATETIME"
+      canonical_form: json-canonical-rfc8785
+
+# =============================================================================
+# 6. CHANGE CONTROL
+# -----------------------------------------------------------------------------
+# Any change to this schema (closed enums, required fields, invariants, or
+# example fixtures) requires:
+#   - A change-controlled diff with regression evaluation against the golden set.
+#   - Panel-chair signoff.
+#   - Increment of `schema_version` (semver: breaking = major).
+#   - Update of `last_reviewed`.
+#   - Coordinated update of every producing/consuming skill's `tools_lock`
+#     reference and acceptance test fixtures.
+# =============================================================================
+
+change_control:
+  semver: true
+  golden_set_regression_required: true
+  panel_chair_signoff_required: true
+  parent_skills_to_update_on_breaking_change:
+    - cpg-htn-2025-acc-aha/skills/parse-prepare-pdf
+    - cpg-htn-2025-acc-aha/skills/parse-detect-layout
+    - cpg-htn-2025-acc-aha/skills/parse-extract-text
+    - cpg-htn-2025-acc-aha/skills/parse-acc-aha-recbox
+    - cpg-htn-2025-acc-aha/skills/parse-extract-figures
+    - cpg-htn-2025-acc-aha/skills/parse-ocr-fallback
+    - cpg-htn-2025-acc-aha/skills/parse-reconcile-queue
+    - cpg-htn-2025-acc-aha/skills/extract-recommendation-cor-loe
+    - cpg-htn-2025-acc-aha/skills/extract-bp-thresholds
+    - cpg-htn-2025-acc-aha/skills/extract-pharm-rules
+    - cpg-htn-2025-acc-aha/skills/predecessor-map-2017

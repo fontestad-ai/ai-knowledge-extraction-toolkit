@@ -1,1 +1,2 @@
-"""GAIK Demo API Routers"""
+"""Clinical API routers."""
+

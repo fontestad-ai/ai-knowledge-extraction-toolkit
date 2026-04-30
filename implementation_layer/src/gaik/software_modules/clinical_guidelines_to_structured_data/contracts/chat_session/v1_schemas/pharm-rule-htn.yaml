@@ -1,0 +1,1795 @@
+# =============================================================================
+# pharm-rule-htn.yaml
+# -----------------------------------------------------------------------------
+# Standalone schema for the closed-shape pharmacologic-rule set produced
+# by `extract-pharm-rules` at Phase 13 (P13) and consumed by:
+#   - `emit-cql-htn` at Phase 20 (rule_id ↔ CQL define statement)
+#   - `cds-hooks-package-htn` at Phase 22 (rule_id ↔ service-branch)
+#   - `safety-hbp` at Phase 23 (rule_id ↔ hazard mitigation)
+#   - `fhir-implementation-guide-build` at Phase 26 (rule_id ↔ Evidence /
+#     EvidenceVariable)
+#
+# This file is the contract for:
+#   - The closed five-kind rule enum (first-line-selection, denylist,
+#     dose-modifier, monitoring, discontinuation).
+#   - The closed Trigger, Consequence, PopulationFilter, AnchorKind,
+#     PostureAtCds, CdsHook, CardIndicator support enums.
+#   - The dual-LLM family-distinct agreement structure (mirrored from
+#     `atomic-unit.yaml` AU-INV-09 and `extract-recommendation-cor-loe`
+#     §3).
+#   - The pregnancy-denylist-specific constraint block (mirrored from
+#     `cds-hooks-services-htn.yaml` §3.7), encoded here as a schema-level
+#     invariant on every rule whose `population_filter[]` contains
+#     `pregnant` or `postpartum` and whose `kind == "denylist"`.
+#   - The closed AttendingOverridePattern denylist (mirrored from
+#     `cds-hooks-services-htn.yaml` §2.5), enforced as a schema-level
+#     invariant scanning every rule's `rationale` and
+#     `clinical_consequence` free-text fields.
+#   - The panel-chair acknowledgement structure for held rules, with
+#     the explicit prohibition on pregnancy-denylist held-rule
+#     acknowledgement encoded as a schema-level invariant.
+#   - The rule-set fixity-manifest shape (RFC 8785 JCS canonicalization;
+#     SHA-256 of the canonical bytes).
+#   - Post-seal immutability rules (rules in state `sealed` are
+#     immutable; corrections require a new rule-set version with
+#     explicit predecessor chain).
+#
+# Posture: caution over velocity, fidelity over coverage, hard-refusal-
+# on-pregnancy over convenience. The closed five-kind set is closed at
+# the schema level; new kinds require ADR-HTN-001 amendment under
+# panel-chair signoff. The dual-LLM family-distinct rule is mechanically
+# enforced on every rule. The pregnancy-denylist constraint block is
+# the most-restricted shape in the schema and cannot be relaxed at any
+# downstream phase. PCE-legacy never feeds rules.
+#
+# This file does NOT contain CQL bytes, CDS Hooks descriptor bytes,
+# RxNorm content, or terminology-server endpoints. It is the
+# rule-extraction-layer contract between Gate-1-finalized records /
+# atomic units and the downstream CQL / CDS Hooks / Safety Case / IG
+# build phases.
+#
+# Authority:
+#   - ADR-HTN-001 D2 (single authoritative source)
+#   - ADR-HTN-001 D3 (native ACC/AHA grading preserved as primary)
+#   - ADR-HTN-001 D5 (PREVENT canonical)
+#   - ADR-HTN-001 D8 (pregnancy hard-block enforced at order-select)
+#   - ADR-HTN-001 D9 (three non-overridable human gates; this schema
+#     is gated by Gate 1 upstream and feeds Gate 2 / Gate 3 downstream)
+#   - ADR-HTN-001 D10 (PHI fail-closed; the rules carry no patient-
+#     identifying content)
+#   - ADR-HTN-001 D11 (Synthea-only test data; the rules are the
+#     enforcement surface that P21 tests under Synthea cohorts)
+#   - ADR-HTN-001 D14 (predecessor 2017 advisory; mapping does not
+#     propagate as a rule input)
+#   - ADR-HTN-001 D15 (drift detection; RxNorm-pin alignment is checked
+#     at every re-run)
+#   - Framework spec §3 (pipeline; P13 placement)
+#   - Framework spec §5 (skills; this schema's writer is
+#     `extract-pharm-rules`)
+#   - Framework spec §7 (CDS Hooks services; the pregnancy denylist as
+#     `order-select`)
+#   - Framework spec §8 (hazards; H-01..H-05 mitigation requires the
+#     rules under this schema)
+#   - `extract-pharm-rules` SKILL.md (the only authorized writer)
+#   - Parent framework rules: `god-session`, `human-authorization`,
+#     `native-ux-tools`
+#
+# Relationship to neighboring schemas (separate files, referenced by
+# $ref or by content-hash pointer):
+#   - schemas/recommendation-record-htn.yaml  (input; INV-09, INV-10)
+#   - schemas/atomic-unit.yaml                (input; AU-INV-09,
+#                                              AU-INV-22..25)
+#   - schemas/sair.yaml                       (input; reversible-
+#                                              normalization log)
+#   - schemas/acc-aha-grading.yaml            (closed COR/LOE enums)
+#   - schemas/gate1-register.yaml             (finalization preconditions
+#                                              and closed EditTarget set;
+#                                              panel-chair escalation
+#                                              paths)
+#   - schemas/gate2-register.yaml             (downstream consumer at
+#                                              P20-Gate-2; Library
+#                                              snapshots inherit
+#                                              hard-block invariants
+#                                              from rules under this
+#                                              schema)
+#   - schemas/safety-case-htn.yaml            (downstream consumer;
+#                                              SC-INV-09, SC-INV-10,
+#                                              SC-INV-26, SC-INV-27)
+#   - schemas/cds-hooks-services-htn.yaml     (downstream consumer; §3.7
+#                                              PregnancyDenylistConstraints
+#                                              and §2.5 AttendingOverride
+#                                              Pattern are mirrored
+#                                              here)
+#   - schemas/gate3-attestation.yaml          (downstream consumer;
+#                                              the rule set's
+#                                              fixity-manifest hash is
+#                                              part of the build's
+#                                              evidence chain)
+#   - schemas/guideline-manifest-hbp-2025.yaml (per-build manifest;
+#                                              tools_lock.llm_pair[],
+#                                              tools_lock.items[]
+#                                              kind=vlm,
+#                                              terminology[] (RxNorm
+#                                              edition), risk_engine,
+#                                              intended_use.age_min_
+#                                              inclusive, pregnancy
+#                                              value-set id, tsa_list
+#                                              are consulted)
+# =============================================================================
+
+$schema: "https://json-schema.org/draft/2020-12/schema"
+$id: "https://aiwg.io/cpg-htn-2025-acc-aha/schemas/pharm-rule-htn.yaml"
+title: "PharmRuleHTN"
+description: >
+  Auditable, deterministic-id-bound, RFC-8785-canonical contract for
+  the closed-shape pharmacologic-rule set produced by
+  `extract-pharm-rules`. Encodes the closed five-kind rule enum, the
+  closed support enums (Trigger, Consequence, PopulationFilter,
+  AnchorKind, PostureAtCds, CdsHook, CardIndicator), the dual-LLM
+  family-distinct agreement structure, the pregnancy-denylist-specific
+  constraint block, the closed AttendingOverridePattern denylist as a
+  schema-level invariant, the panel-chair acknowledgement structure
+  for held rules with the explicit prohibition on pregnancy-denylist
+  held-rule acknowledgement, the rule-set fixity-manifest shape, and
+  the post-seal immutability rules.
+version: "1.0.0"
+schema_lifecycle: stable
+last_reviewed: "HUMAN_FILL: ISO-8601 date of most recent panel review of this schema"
+authority:
+  adr: ADR-HTN-001
+  framework: cpg-htn-2025-acc-aha
+  parent_framework: aiwg-training
+license: MIT
+
+# -----------------------------------------------------------------------------
+# 1. POLICY (normative)
+# -----------------------------------------------------------------------------
+
+policy:
+
+  closed_rule_kind_set:
+    rule: >
+      Every PharmRule's `kind` MUST be a member of the closed
+      five-kind enum in §2.1 (`first-line-selection`, `denylist`,
+      `dose-modifier`, `monitoring`, `discontinuation`). Adding a
+      sixth kind requires ADR-HTN-001 amendment under panel-chair
+      signoff and a coordinated update of `extract-pharm-rules`,
+      `emit-cql-htn`, `cds-hooks-package-htn`, `safety-hbp`, and
+      `fhir-implementation-guide-build`.
+
+  closed_support_enums:
+    rule: >
+      Every PharmRule's `trigger`, `consequence`, `population_filter[]`,
+      `anchor_kind`, `posture_at_cds`, `cds_hook`, and indicator-set
+      values MUST be members of the closed enums in §2. Out-of-enum
+      values BLOCK the build with `enum-violation`.
+
+  dual_llm_family_distinct_agreement:
+    rule: >
+      Every PharmRule MUST record an `agreement` block populated by
+      the dual-LLM family-distinct extraction pass. The two LLMs MUST
+      be from distinct vendor families per the active manifest's
+      `tools_lock.llm_pair[]` and the framework's
+      `docs/llm-family-matrix.md` ground-truth list (mirrored from
+      `atomic-unit.yaml` AU-INV-09 and from
+      `extract-recommendation-cor-loe` §1.4). Family collapse on the
+      pinned pair BLOCKs the build. The agreement state is one of
+      `agreed`, `held`, or `conflict`; rules in `agreed` advance to
+      verification, `held` route to the panel-chair queue, and
+      `conflict` route the parent record to panel-chair re-review.
+
+  inheritance_from_parent_record_and_atomic_unit:
+    rule: >
+      Every PharmRule MUST inherit `acc_aha_cor` and `acc_aha_loe`
+      from its parent `RecommendationRecordHTN` (read-only; the rule
+      cannot relax COR or LOE). Anchors (`sair_sha256`, `bbox`,
+      `page`) are inherited from the parent `AtomicUnit`. The parent
+      record's Gate-1 cohort id is recorded for cross-reference.
+      Mismatches between rule fields and parent fields are a release
+      blocker.
+
+  hard_block_basis_for_denylist:
+    rule: >
+      Every PharmRule of `kind == "denylist"` MUST cite an
+      `anchor_kind` from the closed set
+      {`cor-iii-harm-anchor`, `cor-iii-no-benefit-anchor`,
+      `explicit-should-not-anchor`, `explicit-not-recommended-anchor`}.
+      Other anchor kinds (`cor-i-anchor`, `cor-iia-anchor`,
+      `cor-iib-anchor`) are not admissible for denylist rules under
+      any circumstance. The parent record's `acc_aha_cor` MUST be
+      `III-Harm` or `III-No-Benefit` for `cor-iii-*` anchors. Mismatch
+      emits `denylist-without-hard-block-basis` and BLOCKs.
+
+  pregnancy_denylist_constraint_block:
+    rule: >
+      A PharmRule whose `population_filter[]` contains `pregnant` or
+      `postpartum` AND whose `kind == "denylist"` MUST satisfy ALL of
+      the following (PregnancyDenylistConstraints, mirrored from
+      `cds-hooks-services-htn.yaml` §3.7 and adapted to the
+      rule-extraction layer):
+        a) `posture_at_cds == "hard-refuse"`
+        b) `cds_hook == "order-select"`
+        c) `attending_override_permitted == false`
+        d) `documentation_only == false`
+        e) `indicator_set == ["critical"]`
+        f) `parent_record_id` resolves to a record whose
+           `pico_precheck.populations[]` includes `pregnant` or
+           `postpartum`
+        g) `parent_atomic_unit_id` resolves to a unit whose
+           `anchors.anchor_kind ∈ {"cor-iii-harm-anchor",
+                                    "explicit-should-not-anchor",
+                                    "explicit-not-recommended-anchor"}`
+        h) `acc_aha_cor == "III-Harm"`
+        i) NO key or string value anywhere in the rule's `rationale`,
+           `clinical_consequence`, or `held_remediation_hint` fields
+           (case-insensitive after Unicode NFC) matches any
+           AttendingOverridePattern from §2.7
+      Validators MUST refuse any pregnancy denylist rule that fails
+      any of (a..i) and MUST emit the corresponding closed audit event
+      from §2.13.
+
+  attending_override_denylist:
+    rule: >
+      Every PharmRule MUST be free of attending-override semantics in
+      its free-text fields. Validators MUST recursively scan every
+      string value in `rationale`, `clinical_consequence`, and
+      `held_remediation_hint` (case-insensitive after Unicode NFC) for
+      any AttendingOverridePattern from §2.7. Any match BLOCKs the
+      build and emits an `attending-override-pattern-detected` audit
+      event. The pattern set is closed; new patterns require
+      ADR-HTN-001 amendment.
+
+  pce_legacy_never_feeds_rules:
+    rule: >
+      No PharmRule may reference `PCE-legacy` in any field, including
+      `trigger` literal values, `consequence` literal values,
+      `rationale`, `clinical_consequence`, or
+      `held_remediation_hint`. PREVENT is canonical per ADR-HTN-001
+      D5; any PCE-legacy reference is a release blocker.
+
+  age_gate_eq_18:
+    rule: >
+      Every PharmRule's parent record's `pico_precheck.populations[]`
+      MUST be compatible with the manifest's
+      `intended_use.age_min_inclusive == 18`. Pediatric populations
+      are out of scope and rejected at the rule-extraction layer.
+
+  rxnorm_pin_alignment:
+    rule: >
+      Every PharmRule MUST record `rxnorm_edition_pin` matching the
+      active manifest's pinned RxNorm edition. The rule's
+      `drug_classes[]` MUST resolve under that edition with non-empty
+      RxNorm subsets at validation time. RxNorm edition drift between
+      packaging and validation BLOCKs and emits `rxnorm-pin-drift`.
+
+  numeric_fact_integrity:
+    rule: >
+      Every PharmRule's `numeric_facts[]` MUST round-trip
+      byte-for-byte against the parent atomic unit's `text_verbatim`
+      via deterministic regex AND verify against an independent VLM
+      re-read. Mismatch routes the rule to the panel-chair queue with
+      `numeric-fact-mismatch`.
+
+  verbatim_integrity:
+    rule: >
+      Every PharmRule's `source_text_verbatim` MUST round-trip
+      byte-for-byte against the parent atomic unit's `text_verbatim`
+      after Phase-2 reversible normalization. The
+      `normalization_log[]` MUST round-trip. Mismatch routes the rule
+      to the queue with `verbatim-mismatch`.
+
+  panel_chair_acknowledgement_for_held:
+    rule: >
+      A rule-set whose `rules[]` contains any rule in `held` state
+      MUST carry a panel-chair acknowledgement signed by the chair's
+      institutional KMS key, time-stamped via a manifest-pinned TSA.
+      The acknowledgement does NOT override the held flag; downstream
+      phases consume held rules with the held flag intact (e.g., as
+      `informational` rather than `hard-refuse`). The acknowledgement
+      records that the chair has reviewed the held rule's diff.
+      Rules of `kind == "denylist"` whose `population_filter[]`
+      contains `pregnant` or `postpartum` MAY NOT be acknowledged
+      under `held` state; such rules MUST reach `agreed` before any
+      downstream phase consumes them. The schema enforces this with
+      `PR-INV-21`.
+
+  conflict_routing:
+    rule: >
+      A rule whose `agreement.state == "conflict"` MUST NOT be
+      written to the canonical rule set; it routes to the panel-chair
+      queue and pauses downstream phases for the parent record. The
+      parent record routes back through Gate 1 (`gate1-sme-review
+      --mode chair-finalize` with closed concern category
+      `atomicity-state-disputed`) for re-decomposition before
+      re-extraction.
+
+  deterministic_id_derivation:
+    rule: >
+      Every PharmRule's `rule_id` MUST be the deterministic
+      truncated SHA-256 of the canonical tuple
+      `(parent_record_id, parent_atomic_unit_id, kind)`. Re-runs
+      against the same inputs produce identical rule_ids; downstream
+      consumers (P20, P22, P23, P26) re-bind without renumbering.
+
+  rule_canonicalization:
+    rule: >
+      Every PharmRule's `fixity.rule_sha256` MUST equal SHA-256 of
+      the JCS-canonical (RFC 8785) form of the rule with `fixity`
+      excluded. Validators recompute and compare; mismatch is a
+      release blocker.
+
+  rule_set_canonicalization:
+    rule: >
+      The rule set's `fixity.rule_set_sha256` MUST equal SHA-256 of
+      the JCS-canonical form of THIS document with both `fixity` AND
+      `panel_chair_acknowledgement.acknowledgement_signoff` excluded.
+      The chair's signature is computed over the rule_set_sha256, so
+      including it in the canonical form would create a circular
+      dependency; the schema explicitly excludes it from the SHA
+      payload.
+
+  post_seal_immutability:
+    rule: >
+      Once a rule set's `state == "sealed"` and
+      `fixity.rule_set_sha256` is populated AND, when held rules are
+      present, `panel_chair_acknowledgement.acknowledgement_signoff`
+      verifies, neither the rule set nor any rule's `fixity` may be
+      mutated. Corrections require a new rule-set version with
+      `predecessor_rule_set_sha256` referring to the superseded one.
+      The old rule set is retained immutably for audit.
+
+  predecessor_chain:
+    rule: >
+      `predecessor_rule_set_sha256` MUST be set whenever this rule
+      set supersedes a prior one. The predecessor's state MUST be
+      `superseded` or `withdrawn`. The chain is monotone; cycles are
+      forbidden.
+
+  audit_log_append_only:
+    rule: >
+      `audit_log[]` MUST be append-only and ordered by `occurred_at`.
+      Validators compute the chained hash of events; out-of-order or
+      missing events indicate tampering and are release blockers.
+
+# -----------------------------------------------------------------------------
+# 2. CLOSED ENUMERATIONS
+# -----------------------------------------------------------------------------
+
+$defs:
+
+  # ---------------------------------------------------------------------------
+  # 2.1 Closed rule kinds (the closed five-kind set)
+  # ---------------------------------------------------------------------------
+  PharmRuleKind:
+    type: string
+    enum:
+      - first-line-selection
+      - denylist
+      - dose-modifier
+      - monitoring
+      - discontinuation
+
+  # ---------------------------------------------------------------------------
+  # 2.2 Trigger (closed)
+  # ---------------------------------------------------------------------------
+  Trigger:
+    type: string
+    enum:
+      - order-select-medication-class
+      - order-select-medication-rxnorm-set
+      - prescribe-or-refill
+      - bp-threshold-met
+      - population-detected
+      - comorbidity-detected
+      - lab-threshold-met
+      - monitoring-interval-elapsed
+      - taper-protocol-required
+
+  # ---------------------------------------------------------------------------
+  # 2.3 Consequence (closed)
+  # ---------------------------------------------------------------------------
+  Consequence:
+    type: string
+    enum:
+      - refuse-with-rationale
+      - recommend-class
+      - recommend-rxnorm-set
+      - start-low-go-slow
+      - dose-cap-numeric
+      - monitoring-required-interval
+      - monitoring-required-event
+      - protocolized-taper-required
+      - escalate-workup
+
+  # ---------------------------------------------------------------------------
+  # 2.4 PopulationFilter (closed; mirrored from cds-hooks-services-htn.yaml)
+  # ---------------------------------------------------------------------------
+  PopulationFilter:
+    type: string
+    enum:
+      - general-adult
+      - older-adult
+      - pregnant
+      - postpartum
+      - ckd
+      - t2dm
+      - hf-rEF
+      - hf-pEF
+      - cad
+      - post-stroke
+      - secondary-htn-suspected
+      - urgency
+      - emergency
+      - resistant-htn
+
+  # ---------------------------------------------------------------------------
+  # 2.5 AnchorKind (closed; mirrored from atomic-unit.yaml and
+  #     safety-case-htn.yaml)
+  # ---------------------------------------------------------------------------
+  AnchorKind:
+    type: string
+    enum:
+      - cor-i-anchor
+      - cor-iia-anchor
+      - cor-iib-anchor
+      - cor-iii-no-benefit-anchor
+      - cor-iii-harm-anchor
+      - explicit-should-not-anchor
+      - explicit-not-recommended-anchor
+
+  # ---------------------------------------------------------------------------
+  # 2.6 PostureAtCds, CdsHook, CardIndicator (mirrored from
+  #     cds-hooks-services-htn.yaml)
+  # ---------------------------------------------------------------------------
+  PostureAtCds:
+    type: string
+    enum:
+      - hard-refuse
+      - soft-warning
+      - informational
+
+  CdsHook:
+    type: string
+    enum:
+      - order-select
+      - patient-view
+      - encounter-discharge
+
+  CardIndicator:
+    type: string
+    enum:
+      - info
+      - warning
+      - critical
+      - hard-stop
+
+  # ---------------------------------------------------------------------------
+  # 2.7 Closed AttendingOverridePattern denylist
+  # ---------------------------------------------------------------------------
+  # Mirrored verbatim from `cds-hooks-services-htn.yaml` §2.5.
+  # Validators MUST recursively scan every string value in
+  # `rationale`, `clinical_consequence`, and `held_remediation_hint`
+  # (case-insensitive after Unicode NFC) for any of these patterns.
+  # Matches BLOCK the build.
+  # ---------------------------------------------------------------------------
+  AttendingOverridePattern:
+    type: string
+    enum:
+      - permit_on_attending_override
+      - permitOnAttendingOverride
+      - attending_override
+      - attendingOverride
+      - override_role
+      - overrideRole
+      - override_reason_required
+      - overrideReasonRequired
+      - attending_can_override
+      - attendingCanOverride
+      - override_with_attending_co_sign
+      - overrideWithAttendingCoSign
+      - permit_on_co_sign
+      - permitOnCoSign
+      - override_permitted
+      - overridePermitted
+      - suppressible
+      - suppressibleByRole
+      - documentationOnly
+      - documentation_only
+      - soft_warning
+      - softWarning
+
+  # ---------------------------------------------------------------------------
+  # 2.8 ACC/AHA grading (mirrored from acc-aha-grading.yaml)
+  # ---------------------------------------------------------------------------
+  AccAhaCOR:
+    type: string
+    enum: [I, IIa, IIb, III-No-Benefit, III-Harm]
+
+  AccAhaLOE:
+    type: string
+    enum: [A, B-R, B-NR, C-LD, C-EO]
+
+  # ---------------------------------------------------------------------------
+  # 2.9 Risk engine (closed; mirrored from cds-hooks-services-htn.yaml)
+  # ---------------------------------------------------------------------------
+  RiskEngineName:
+    type: string
+    enum:
+      - PREVENT
+      - PCE-legacy   # MUST NEVER appear in any rule field; enum exists only to make the deny rule machine-checkable
+
+  # ---------------------------------------------------------------------------
+  # 2.10 LLM family identifiers (closed; mirrored advisory from
+  #      docs/llm-family-matrix.md ground truth)
+  # ---------------------------------------------------------------------------
+  LlmFamily:
+    type: string
+    enum:
+      - openai
+      - anthropic
+      - google
+      - meta-llama
+      - mistral
+      - cohere
+      - amazon-nova
+      - azure-openai
+      - other-pinned
+    description: >
+      Closed family classification. The matrix file
+      `docs/llm-family-matrix.md` is the framework's ground truth and
+      governs rotations under panel-chair signoff. This enum exists to
+      make the family-distinct rule machine-checkable.
+
+  # ---------------------------------------------------------------------------
+  # 2.11 Agreement state (dual-LLM family-distinct)
+  # ---------------------------------------------------------------------------
+  AgreementState:
+    type: string
+    enum:
+      - agreed
+      - held
+      - conflict
+
+  # ---------------------------------------------------------------------------
+  # 2.12 Lifecycle state (per rule)
+  # ---------------------------------------------------------------------------
+  RuleState:
+    type: string
+    enum:
+      - pending
+      - advanced
+      - held
+      - conflict
+      - rejected
+      - sealed
+      - superseded
+      - withdrawn
+
+  # ---------------------------------------------------------------------------
+  # 2.13 Rule-set lifecycle state
+  # ---------------------------------------------------------------------------
+  RuleSetState:
+    type: string
+    enum:
+      - draft
+      - awaiting-panel-chair
+      - awaiting-time-stamp
+      - sealed
+      - superseded
+      - withdrawn
+
+  # ---------------------------------------------------------------------------
+  # 2.14 Audit event kinds
+  # ---------------------------------------------------------------------------
+  AuditEventKind:
+    type: string
+    enum:
+      - rule-extracted
+      - rule-verified
+      - rule-routed-to-queue
+      - rule-conflict-pauses-record
+      - rule-set-drafted
+      - rule-set-awaiting-panel-chair
+      - rule-set-acknowledged-by-chair
+      - rule-set-sealed
+      - rule-set-superseded
+      - rule-set-withdrawn
+      - rxnorm-pin-drift
+      - numeric-fact-mismatch
+      - verbatim-mismatch
+      - denylist-without-hard-block-basis
+      - pregnancy-denylist-soft-warning-detected
+      - pregnancy-denylist-attending-override-attempt
+      - pregnancy-denylist-non-order-select-detected
+      - pce-legacy-binding-detected
+      - attending-override-pattern-detected
+      - enum-violation
+      - family-distinct-rule-violated
+      - pharm-rules-mutation-attempt
+
+  # ---------------------------------------------------------------------------
+  # 2.15 Identity / signature primitives (mirrored from neighbor schemas)
+  # ---------------------------------------------------------------------------
+  SignatureAlgorithm:
+    type: string
+    enum:
+      - Ed25519
+      - ECDSA-P256-SHA256
+
+  IdentityAssuranceLevel:
+    type: string
+    enum: [IAL1, IAL2, IAL3]
+
+  AuthenticatorAssuranceLevel:
+    type: string
+    enum: [AAL1, AAL2, AAL3]
+
+  # ---------------------------------------------------------------------------
+  # 2.16 Verification methods
+  # ---------------------------------------------------------------------------
+  VerificationMethod:
+    type: string
+    enum:
+      - rxnorm-resolution
+      - vlm-numeric-reread
+      - regex-numeric-extract
+      - hard-block-basis-anchor-match
+      - verbatim-roundtrip
+      - attending-override-pattern-scan-clean
+      - pregnancy-constraint-block-pass
+      - canonical-sha-match
+
+# -----------------------------------------------------------------------------
+# 3. STRUCTURED TYPES
+# -----------------------------------------------------------------------------
+
+  # ---------------------------------------------------------------------------
+  # 3.1 NumericFact
+  # ---------------------------------------------------------------------------
+  NumericFact:
+    type: object
+    additionalProperties: false
+    required: [token, value, units, offset]
+    properties:
+      token:
+        type: string
+        minLength: 1
+        description: The verbatim numeric token as it appears in the parent atomic unit's `text_verbatim`.
+      value:
+        type: number
+        description: The parsed numeric value.
+      units:
+        type: [string, "null"]
+        description: Units string from the source verbatim (e.g., "mg", "mEq/L", "mm Hg"); null if dimensionless.
+      offset:
+        type: object
+        additionalProperties: false
+        required: [start, end]
+        properties:
+          start: { type: integer, minimum: 0 }
+          end:   { type: integer, minimum: 0 }
+        description: >
+          Character offsets within the parent atomic unit's
+          `text_verbatim` after Phase-2 reversible normalization.
+          Validators MUST verify that text_verbatim[start:end] equals
+          `token` modulo the normalization log.
+      vlm_reread_value:
+        type: [number, "null"]
+        description: >
+          The independent VLM re-read value (mirrored from P9 §5).
+          MUST equal `value` byte-for-byte at validation time, or the
+          rule routes to queue with `numeric-fact-mismatch`.
+
+  # ---------------------------------------------------------------------------
+  # 3.2 NormalizationLogEntry
+  # ---------------------------------------------------------------------------
+  NormalizationLogEntry:
+    type: object
+    additionalProperties: false
+    required: [kind, offset]
+    properties:
+      kind:
+        type: string
+        enum:
+          - soft-hyphen-removed
+          - ligature-decomposed
+          - whitespace-canonicalized
+          - nfc-composed
+      offset:
+        type: integer
+        minimum: 0
+      original:
+        type: [string, "null"]
+        description: The original substring before normalization (when kind requires it).
+      replacement:
+        type: [string, "null"]
+        description: The substring after normalization (when kind requires it).
+
+  # ---------------------------------------------------------------------------
+  # 3.3 LlmAttribution
+  # ---------------------------------------------------------------------------
+  LlmAttribution:
+    type: object
+    additionalProperties: false
+    required: [llm_id, family, version_pin, response_signature]
+    properties:
+      llm_id:
+        type: string
+        minLength: 1
+        description: Stable id resolving to the manifest's `tools_lock.items[]` entry of `kind == "llm"`.
+      family:
+        $ref: "#/$defs/LlmFamily"
+      version_pin:
+        type: string
+        minLength: 1
+        description: The model version pin from the manifest's `tools_lock.items[]`.
+      response_signature:
+        type: string
+        pattern: "^[0-9a-f]{64}$"
+        description: SHA-256 of the LLM's deterministic-test-prompt response, recorded at preflight liveness probe.
+
+  # ---------------------------------------------------------------------------
+  # 3.4 AgreementBlock
+  # ---------------------------------------------------------------------------
+  AgreementBlock:
+    type: object
+    additionalProperties: false
+    required: [state, llm_pair, agreed_llms, dissenting_llms]
+    properties:
+      state:                  { $ref: "#/$defs/AgreementState" }
+      llm_pair:
+        type: array
+        minItems: 2
+        maxItems: 2
+        items: { $ref: "#/$defs/LlmAttribution" }
+      agreed_llms:
+        type: array
+        minItems: 0
+        maxItems: 2
+        items: { type: string, minLength: 1 }
+      dissenting_llms:
+        type: array
+        minItems: 0
+        maxItems: 2
+        items: { type: string, minLength: 1 }
+      held_diff:
+        type: [object, "null"]
+        additionalProperties: false
+        properties:
+          kind_diff:
+            type: [array, "null"]
+            items: { $ref: "#/$defs/PharmRuleKind" }
+            description: When the two LLMs proposed different `kind` values; conflict-class diff.
+          drug_classes_diff:
+            type: [object, "null"]
+            additionalProperties: false
+            properties:
+              llm_a_only: { type: array, items: { type: string } }
+              llm_b_only: { type: array, items: { type: string } }
+          population_filter_diff:
+            type: [object, "null"]
+            additionalProperties: false
+            properties:
+              llm_a_only: { type: array, items: { $ref: "#/$defs/PopulationFilter" } }
+              llm_b_only: { type: array, items: { $ref: "#/$defs/PopulationFilter" } }
+          trigger_diff:
+            type: [object, "null"]
+            additionalProperties: false
+            properties:
+              llm_a: { $ref: "#/$defs/Trigger" }
+              llm_b: { $ref: "#/$defs/Trigger" }
+          consequence_diff:
+            type: [object, "null"]
+            additionalProperties: false
+            properties:
+              llm_a: { $ref: "#/$defs/Consequence" }
+              llm_b: { $ref: "#/$defs/Consequence" }
+          numeric_facts_diff:
+            type: [array, "null"]
+            items:
+              type: object
+              additionalProperties: false
+              required: [token]
+              properties:
+                token:  { type: string }
+                llm_a:  { type: [string, "null"] }
+                llm_b:  { type: [string, "null"] }
+          anchor_kind_diff:
+            type: [object, "null"]
+            additionalProperties: false
+            properties:
+              llm_a: { $ref: "#/$defs/AnchorKind" }
+              llm_b: { $ref: "#/$defs/AnchorKind" }
+      held_remediation_hint:
+        type: [string, "null"]
+        description: >
+          Plain-text remediation hint for the panel-chair queue (e.g.,
+          "Re-decompose atomic unit at P9", "Re-bind drug class at
+          P10"). Validators MUST scan this field for
+          AttendingOverridePattern matches.
+
+  # ---------------------------------------------------------------------------
+  # 3.5 BoundRiskEngine
+  # ---------------------------------------------------------------------------
+  BoundRiskEngine:
+    type: object
+    additionalProperties: false
+    required: [name, legacy_only]
+    properties:
+      name:        { $ref: "#/$defs/RiskEngineName" }
+      legacy_only: { type: boolean }
+
+  # ---------------------------------------------------------------------------
+  # 3.6 Verification
+  # ---------------------------------------------------------------------------
+  RuleVerification:
+    type: object
+    additionalProperties: false
+    required: [verifies, verified_at, methods_passed, methods_failed]
+    properties:
+      verifies:
+        type: boolean
+        description: >
+          Recomputed by `extract-pharm-rules` at every run. Producer
+          claims of `true` are not trusted; validators recompute every
+          method.
+      verified_at:    { type: string, format: date-time }
+      methods_passed:
+        type: array
+        items: { $ref: "#/$defs/VerificationMethod" }
+      methods_failed:
+        type: array
+        items: { $ref: "#/$defs/VerificationMethod" }
+      failure_notes:
+        type: [string, "null"]
+        description: Plain-text diagnostic accompanying methods_failed[].
+
+  # ---------------------------------------------------------------------------
+  # 3.7 Anchor
+  # ---------------------------------------------------------------------------
+  Anchor:
+    type: object
+    additionalProperties: false
+    required: [anchor_kind, sair_sha256, page, bbox]
+    properties:
+      anchor_kind: { $ref: "#/$defs/AnchorKind" }
+      sair_sha256: { type: string, pattern: "^[0-9a-f]{64}$" }
+      page:        { type: integer, minimum: 1 }
+      bbox:
+        type: object
+        additionalProperties: false
+        required: [x0, y0, x1, y1]
+        properties:
+          x0: { type: number }
+          y0: { type: number }
+          x1: { type: number }
+          y1: { type: number }
+
+  # ---------------------------------------------------------------------------
+  # 3.8 Indicator set (per posture)
+  # ---------------------------------------------------------------------------
+  IndicatorSet:
+    type: array
+    minItems: 1
+    items: { $ref: "#/$defs/CardIndicator" }
+    description: >
+      Per-posture closed mapping enforced by PR-INV-09:
+        - posture_at_cds == "hard-refuse"   -> subset of {critical, hard-stop}
+        - posture_at_cds == "soft-warning"  -> exactly ["warning"]
+        - posture_at_cds == "informational" -> exactly ["info"]
+      For pregnancy denylist rules, indicator_set MUST be exactly
+      ["critical"] (PR-INV-19).
+
+  # ---------------------------------------------------------------------------
+  # 3.9 PharmRule (root rule type)
+  # ---------------------------------------------------------------------------
+  PharmRule:
+    type: object
+    additionalProperties: false
+    required:
+      - rule_id
+      - kind
+      - parent_record_id
+      - parent_atomic_unit_id
+      - gate1_cohort_id
+      - acc_aha_cor
+      - acc_aha_loe
+      - drug_classes
+      - rxnorm_edition_pin
+      - population_filter
+      - trigger
+      - consequence
+      - numeric_facts
+      - anchor_kind
+      - anchors
+      - posture_at_cds
+      - cds_hook
+      - indicator_set
+      - attending_override_permitted
+      - documentation_only
+      - source_text_verbatim
+      - normalization_log
+      - rationale
+      - clinical_consequence
+      - bound_risk_engine
+      - agreement
+      - verification
+      - state
+      - fixity
+    properties:
+      rule_id:
+        type: string
+        pattern: "^pr-[0-9a-f]{16}$"
+        description: >
+          Deterministic truncated SHA-256 of `(parent_record_id,
+          parent_atomic_unit_id, kind)` (deterministic_id_derivation).
+      kind:                       { $ref: "#/$defs/PharmRuleKind" }
+      parent_record_id:
+        type: string
+        pattern: "^rec-[0-9a-f]{16}$"
+      parent_atomic_unit_id:
+        type: string
+        pattern: "^au-[0-9a-f]{16}$"
+      gate1_cohort_id:
+        type: string
+        pattern: "^cohort-[0-9a-f]{16}$"
+      acc_aha_cor:                { $ref: "#/$defs/AccAhaCOR" }
+      acc_aha_loe:                { $ref: "#/$defs/AccAhaLOE" }
+      drug_classes:
+        type: array
+        minItems: 1
+        items:
+          type: string
+          minLength: 1
+          description: RxNorm class token, resolvable under `rxnorm_edition_pin`.
+      rxnorm_edition_pin:
+        type: string
+        minLength: 1
+        description: The pinned RxNorm edition identifier from `manifest.terminology[]`.
+      population_filter:
+        type: array
+        minItems: 1
+        items: { $ref: "#/$defs/PopulationFilter" }
+      trigger:                    { $ref: "#/$defs/Trigger" }
+      consequence:                { $ref: "#/$defs/Consequence" }
+      numeric_facts:
+        type: array
+        items: { $ref: "#/$defs/NumericFact" }
+      anchor_kind:                { $ref: "#/$defs/AnchorKind" }
+      anchors:                    { $ref: "#/$defs/Anchor" }
+      posture_at_cds:             { $ref: "#/$defs/PostureAtCds" }
+      cds_hook:                   { $ref: "#/$defs/CdsHook" }
+      indicator_set:              { $ref: "#/$defs/IndicatorSet" }
+      attending_override_permitted:
+        type: boolean
+        const: false
+        description: >
+          MUST be false unconditionally. The framework's policy
+          forbids attending-override on every pharm rule; institutional
+          opt-ins are not permitted at this layer.
+      documentation_only:
+        type: boolean
+        const: false
+        description: >
+          MUST be false unconditionally (mirrored from
+          cds-hooks-services-htn.yaml CDH-INV-08).
+      source_text_verbatim:
+        type: string
+        minLength: 1
+        description: >
+          The verbatim text of the parent atomic unit's `text_verbatim`
+          after Phase-2 reversible normalization. MUST round-trip
+          byte-for-byte against the parent unit (verbatim_integrity).
+      normalization_log:
+        type: array
+        items: { $ref: "#/$defs/NormalizationLogEntry" }
+      rationale:
+        type: string
+        minLength: 1
+        description: >
+          Plain-text rationale citing the parent atomic unit and
+          source guideline span. Validators MUST scan this field for
+          AttendingOverridePattern matches.
+      clinical_consequence:
+        type: string
+        minLength: 1
+        description: >
+          Plain-text clinical-consequence summary (e.g., "Fetal demise
+          from RAAS exposure in pregnancy"). Validators MUST scan
+          this field for AttendingOverridePattern matches.
+      bound_risk_engine:          { $ref: "#/$defs/BoundRiskEngine" }
+      agreement:                  { $ref: "#/$defs/AgreementBlock" }
+      verification:               { $ref: "#/$defs/RuleVerification" }
+      state:                      { $ref: "#/$defs/RuleState" }
+      superseded_by_rule_id:
+        type: [string, "null"]
+        pattern: "^pr-[0-9a-f]{16}$|^null$"
+      fixity:
+        type: object
+        additionalProperties: false
+        required: [rule_sha256, computed_at, canonical_form]
+        properties:
+          rule_sha256:    { type: string, pattern: "^[0-9a-f]{64}$" }
+          computed_at:    { type: string, format: date-time }
+          canonical_form: { type: string, enum: [json-canonical-rfc8785] }
+
+  # ---------------------------------------------------------------------------
+  # 3.10 PanelChairAcknowledgement (signed envelope; required when held
+  #      rules are present and rule-set state == "sealed")
+  # ---------------------------------------------------------------------------
+  PanelChairIdentityProof:
+    type: object
+    additionalProperties: false
+    required: [ial, aal, proofing_method, proofing_evidence_uri, proofed_at, proofed_by_org]
+    properties:
+      ial: { $ref: "#/$defs/IdentityAssuranceLevel" }
+      aal: { $ref: "#/$defs/AuthenticatorAssuranceLevel" }
+      proofing_method:        { type: string }
+      proofing_evidence_uri:  { type: string, format: uri }
+      proofed_at:             { type: string, format: date-time }
+      proofed_by_org:         { type: string }
+      proofed_by_person:      { type: [string, "null"] }
+
+  TimeStamp:
+    type: object
+    additionalProperties: false
+    required: [tsa_name, tsa_url, tsa_cert_fingerprint_sha256, time, token_b64]
+    properties:
+      tsa_name:                    { type: string }
+      tsa_url:                     { type: string, format: uri }
+      tsa_cert_fingerprint_sha256: { type: string, pattern: "^[0-9a-f]{64}$" }
+      time:                        { type: string, format: date-time }
+      token_b64:                   { type: string }
+
+  AcknowledgementSignature:
+    type: object
+    additionalProperties: false
+    required:
+      - algorithm
+      - key_id
+      - payload_canonical_form
+      - payload_sha256
+      - signature_b64
+      - time_stamp
+    properties:
+      algorithm:               { $ref: "#/$defs/SignatureAlgorithm" }
+      key_id:                  { type: string }
+      payload_canonical_form:
+        type: string
+        enum: [json-canonical-rfc8785]
+      payload_sha256:          { type: string, pattern: "^[0-9a-f]{64}$" }
+      signature_b64:           { type: string }
+      time_stamp:              { $ref: "#/$defs/TimeStamp" }
+      verifies:                { type: boolean }
+
+  PanelChair:
+    type: object
+    additionalProperties: false
+    required:
+      - chair_id
+      - legal_name
+      - role
+      - identity_proof
+      - public_key
+    properties:
+      chair_id:
+        type: string
+        pattern: "^rev-[0-9a-f]{16}$"
+        description: >
+          Stable id; resolves to a Reviewer record in any contributing
+          Gate-1 cohort whose `role == "panel-chair"`.
+      legal_name:                   { type: string, minLength: 1 }
+      preferred_credential_string:  { type: [string, "null"] }
+      role:
+        type: string
+        const: panel-chair
+      institution:                  { type: string }
+      identity_proof:               { $ref: "#/$defs/PanelChairIdentityProof" }
+      public_key:
+        type: object
+        additionalProperties: false
+        required: [algorithm, key_id, key_pem]
+        properties:
+          algorithm:           { $ref: "#/$defs/SignatureAlgorithm" }
+          key_id:              { type: string }
+          key_pem:             { type: string }
+          fingerprint_sha256:  { type: string, pattern: "^[0-9a-f]{64}$" }
+
+  PanelChairAcknowledgement:
+    type: object
+    additionalProperties: false
+    required:
+      - held_rule_ids_acknowledged
+      - chair
+      - acknowledged_at
+      - acknowledgement_signoff
+    properties:
+      held_rule_ids_acknowledged:
+        type: array
+        minItems: 0
+        items: { type: string, pattern: "^pr-[0-9a-f]{16}$" }
+        description: >
+          The list of rule_ids whose held state the chair acknowledges.
+          Validators MUST verify that every entry corresponds to a
+          rule whose `state == "held"` AND whose `agreement.state ==
+          "held"`. Pregnancy denylist held rules are explicitly
+          forbidden from this list (PR-INV-21).
+      chair:                            { $ref: "#/$defs/PanelChair" }
+      acknowledged_at:                  { type: string, format: date-time }
+      acknowledgement_signoff:
+        oneOf:
+          - $ref: "#/$defs/AcknowledgementSignature"
+          - type: "null"
+        description: >
+          Signed JCS payload. Computed over the rule_set_sha256 and
+          the held_rule_ids_acknowledged[] list. The schema explicitly
+          excludes this field from the rule_set_sha256 canonicalization
+          payload (rule_set_canonicalization).
+
+  # ---------------------------------------------------------------------------
+  # 3.11 AuditEvent
+  # ---------------------------------------------------------------------------
+  AuditEvent:
+    type: object
+    additionalProperties: false
+    required: [event_id, occurred_at, kind, actor_id, payload_sha256]
+    properties:
+      event_id:        { type: string, pattern: "^evt-[0-9a-f]{16}$" }
+      occurred_at:     { type: string, format: date-time }
+      kind:            { $ref: "#/$defs/AuditEventKind" }
+      actor_id:        { type: string }
+      payload_sha256:  { type: string, pattern: "^[0-9a-f]{64}$" }
+      prov_activity_id:{ type: [string, "null"] }
+
+# -----------------------------------------------------------------------------
+# 4. ROOT TYPE — PharmRuleSet
+# -----------------------------------------------------------------------------
+type: object
+title: PharmRuleSet
+additionalProperties: false
+required:
+  - schema_version
+  - rule_set_id
+  - rule_set_version
+  - guideline_manifest_ref
+  - build
+  - rules
+  - state
+  - audit_log
+  - fixity
+properties:
+
+  schema_version:
+    type: string
+    const: "1.0.0"
+
+  rule_set_id:
+    type: string
+    pattern: "^prs-[0-9a-f]{16}$"
+    description: >
+      Stable, deterministic id (truncated SHA-256 of build_run_id +
+      manifest_payload_sha256 + records_sha256 +
+      atomic_units_sha256). Stable across re-runs given identical
+      inputs.
+
+  rule_set_version:
+    type: string
+    pattern: "^[0-9]+\\.[0-9]+\\.[0-9]+$"
+
+  predecessor_rule_set_sha256:
+    type: [string, "null"]
+    pattern: "^[0-9a-f]{64}$|^null$"
+
+  predecessor_rule_set_state:
+    type: [string, "null"]
+    enum: [superseded, withdrawn, null]
+
+  guideline_manifest_ref:
+    type: string
+    description: Pointer to the active `schemas/guideline-manifest-hbp-2025.yaml` instance.
+
+  # ---------------------------------------------------------------------------
+  # 4.1 Build identity
+  # ---------------------------------------------------------------------------
+  build:
+    type: object
+    additionalProperties: false
+    required:
+      - run_id
+      - build_version_label
+      - opened_at
+      - manifest_payload_sha256
+      - records_path
+      - records_sha256
+      - atomic_units_path
+      - atomic_units_sha256
+      - terminology_bindings_path
+      - terminology_bindings_sha256
+      - bp_thresholds_path
+      - bp_thresholds_sha256
+      - gate1_register_paths
+      - gate1_register_sha256s
+    properties:
+      run_id:                     { type: string, format: uuid }
+      build_version_label:
+        type: string
+        pattern: "^v[0-9]+\\.[0-9]+\\.[0-9]+\\+ACC-AHA-2025\\+US\\+[0-9]{4}-[0-9]{2}-[0-9]{2}$"
+      opened_at:                  { type: string, format: date-time }
+      sealed_at:                  { type: [string, "null"], format: date-time }
+      manifest_payload_sha256:    { type: string, pattern: "^[0-9a-f]{64}$" }
+      records_path:               { type: string }
+      records_sha256:             { type: string, pattern: "^[0-9a-f]{64}$" }
+      atomic_units_path:          { type: string }
+      atomic_units_sha256:        { type: string, pattern: "^[0-9a-f]{64}$" }
+      terminology_bindings_path:  { type: string }
+      terminology_bindings_sha256:{ type: string, pattern: "^[0-9a-f]{64}$" }
+      bp_thresholds_path:         { type: string }
+      bp_thresholds_sha256:       { type: string, pattern: "^[0-9a-f]{64}$" }
+      gate1_register_paths:
+        type: array
+        minItems: 1
+        items: { type: string }
+      gate1_register_sha256s:
+        type: array
+        minItems: 1
+        items: { type: string, pattern: "^[0-9a-f]{64}$" }
+
+  # ---------------------------------------------------------------------------
+  # 4.2 Rules
+  # ---------------------------------------------------------------------------
+  rules:
+    type: array
+    minItems: 0
+    items: { $ref: "#/$defs/PharmRule" }
+    description: >
+      The canonical rule set. Rules in `conflict` state MUST NOT be
+      written here (conflict_routing); they route to the panel-chair
+      queue and pause downstream phases for the parent record.
+      Rules in `held` state MAY appear here ONLY if a panel-chair
+      acknowledgement is recorded (panel_chair_acknowledgement_for_held).
+
+  # ---------------------------------------------------------------------------
+  # 4.3 Panel-chair acknowledgement (required when held rules are present
+  #     AND state == "sealed")
+  # ---------------------------------------------------------------------------
+  panel_chair_acknowledgement:
+    oneOf:
+      - $ref: "#/$defs/PanelChairAcknowledgement"
+      - type: "null"
+
+  # ---------------------------------------------------------------------------
+  # 4.4 Lifecycle
+  # ---------------------------------------------------------------------------
+  state: { $ref: "#/$defs/RuleSetState" }
+
+  # ---------------------------------------------------------------------------
+  # 4.5 Audit log (append-only)
+  # ---------------------------------------------------------------------------
+  audit_log:
+    type: array
+    items: { $ref: "#/$defs/AuditEvent" }
+
+  # ---------------------------------------------------------------------------
+  # 4.6 Rule-set fixity
+  # ---------------------------------------------------------------------------
+  fixity:
+    type: object
+    additionalProperties: false
+    required: [rule_set_sha256, computed_at, canonical_form]
+    properties:
+      rule_set_sha256:
+        type: string
+        pattern: "^[0-9a-f]{64}$"
+        description: >
+          SHA-256 of the JCS-canonical form of THIS document with
+          BOTH `fixity` AND
+          `panel_chair_acknowledgement.acknowledgement_signoff`
+          excluded (rule_set_canonicalization). Deterministic across
+          re-runs given identical inputs.
+      computed_at:    { type: string, format: date-time }
+      canonical_form: { type: string, enum: [json-canonical-rfc8785] }
+
+# -----------------------------------------------------------------------------
+# 5. CROSS-FIELD INVARIANTS (validators MUST enforce)
+# -----------------------------------------------------------------------------
+
+invariants:
+
+  - id: PR-INV-01
+    description: >
+      Every PharmRule's `kind` MUST be a member of PharmRuleKind
+      (closed_rule_kind_set). Out-of-enum kinds are a release blocker.
+
+  - id: PR-INV-02
+    description: >
+      Every PharmRule's `rule_id` MUST be the deterministic truncated
+      SHA-256 of `(parent_record_id, parent_atomic_unit_id, kind)`.
+      Validators recompute and compare; mismatch is a release blocker
+      (deterministic_id_derivation).
+
+  - id: PR-INV-03
+    description: >
+      Every PharmRule's `acc_aha_cor` and `acc_aha_loe` MUST equal
+      the parent record's `acc_aha_cor` and `acc_aha_loe`. The rule
+      MUST NOT relax COR or LOE (inheritance_from_parent_record_and_
+      atomic_unit). Mismatch is a release blocker.
+
+  - id: PR-INV-04
+    description: >
+      Every PharmRule's `anchors.sair_sha256`, `anchors.page`, and
+      `anchors.bbox` MUST match the parent atomic unit's anchor
+      values exactly. The `anchor_kind` MUST equal both
+      `anchors.anchor_kind` and the parent unit's anchor kind.
+
+  - id: PR-INV-05
+    description: >
+      Every PharmRule of `kind == "denylist"` MUST cite an
+      `anchor_kind` from the closed set
+      {`cor-iii-harm-anchor`, `cor-iii-no-benefit-anchor`,
+      `explicit-should-not-anchor`, `explicit-not-recommended-anchor`}
+      AND its parent record's `acc_aha_cor` MUST be `III-Harm` or
+      `III-No-Benefit` for `cor-iii-*` anchors. Mismatch emits
+      `denylist-without-hard-block-basis` and BLOCKs
+      (hard_block_basis_for_denylist).
+
+  - id: PR-INV-06
+    description: >
+      Every PharmRule of `kind == "discontinuation"` MUST cite
+      `anchor_kind == "explicit-should-not-anchor"` AND its
+      `consequence` MUST be `protocolized-taper-required`. Mismatch
+      is a release blocker.
+
+  - id: PR-INV-07
+    description: >
+      For every PharmRule, the (kind, posture_at_cds, cds_hook) tuple
+      MUST satisfy the per-kind constraint matrix:
+        - first-line-selection: cds_hook ∈ {order-select, patient-view};
+                                posture_at_cds ∈ {informational, soft-warning}
+        - denylist:             cds_hook == order-select;
+                                posture_at_cds == hard-refuse
+        - dose-modifier:        cds_hook == order-select;
+                                posture_at_cds ∈ {soft-warning, informational}
+        - monitoring:           cds_hook ∈ {order-select, patient-view, encounter-discharge};
+                                posture_at_cds ∈ {soft-warning, informational}
+        - discontinuation:      cds_hook ∈ {order-select, encounter-discharge};
+                                posture_at_cds ∈ {hard-refuse, soft-warning}
+      Validators MUST refuse any rule whose tuple is not in the matrix.
+
+  - id: PR-INV-08
+    description: >
+      Every PharmRule's `attending_override_permitted` MUST be
+      `false` (const false). Every PharmRule's `documentation_only`
+      MUST be `false` (const false). Validators MUST refuse `true`
+      values (attending_override_denylist).
+
+  - id: PR-INV-09
+    description: >
+      For every PharmRule, the (posture_at_cds, indicator_set) pairing
+      MUST satisfy:
+        - posture_at_cds == "hard-refuse"   -> indicator_set ⊆ {critical, hard-stop}
+        - posture_at_cds == "soft-warning"  -> indicator_set == ["warning"]
+        - posture_at_cds == "informational" -> indicator_set == ["info"]
+      Mismatched pairs are a release blocker.
+
+  - id: PR-INV-10
+    description: >
+      Every PharmRule's `agreement.llm_pair[]` MUST contain exactly
+      two entries from distinct LlmFamily values
+      (dual_llm_family_distinct_agreement). Family collapse on the
+      pinned pair BLOCKs and emits
+      `family-distinct-rule-violated`.
+
+  - id: PR-INV-11
+    description: >
+      For every PharmRule:
+        - agreement.state == "agreed"   -> agreed_llms.length == 2 AND
+                                            dissenting_llms.length == 0
+        - agreement.state == "held"     -> agreed_llms.length ∈ {0,1} AND
+                                            held_diff is non-null
+        - agreement.state == "conflict" -> held_diff.kind_diff is non-null AND
+                                            the rule MUST NOT appear in the
+                                            canonical rule set (conflict_routing)
+      Validators MUST refuse rules whose agreement block contradicts
+      these invariants.
+
+  - id: PR-INV-12
+    description: >
+      Every PharmRule's `numeric_facts[]` token MUST round-trip
+      byte-for-byte against the parent atomic unit's `text_verbatim`
+      at offset (start, end) modulo the normalization log
+      (numeric_fact_integrity). Validators MUST recompute via
+      deterministic regex AND verify `vlm_reread_value == value`;
+      mismatch routes the rule to the queue with
+      `numeric-fact-mismatch`.
+
+  - id: PR-INV-13
+    description: >
+      Every PharmRule's `source_text_verbatim` MUST round-trip
+      byte-for-byte against the parent atomic unit's `text_verbatim`
+      after applying the `normalization_log[]` in reverse
+      (verbatim_integrity).
+
+  - id: PR-INV-14
+    description: >
+      Every PharmRule's `rxnorm_edition_pin` MUST equal the active
+      manifest's `terminology[]` RxNorm edition AND every entry in
+      `drug_classes[]` MUST resolve to a non-empty subset under that
+      edition at validation time (rxnorm_pin_alignment). Drift emits
+      `rxnorm-pin-drift` and BLOCKs.
+
+  - id: PR-INV-15
+    description: >
+      Every PharmRule's `bound_risk_engine.name` MUST be `PREVENT`
+      AND `bound_risk_engine.legacy_only` MUST be `false`. PCE-legacy
+      is forbidden in any rule field (pce_legacy_never_feeds_rules).
+      Validators recursively scan every string field for the literal
+      `PCE-legacy`; matches BLOCK and emit
+      `pce-legacy-binding-detected`.
+
+  - id: PR-INV-16
+    description: >
+      Validators MUST recursively scan every string value in every
+      PharmRule's `rationale`, `clinical_consequence`,
+      `agreement.held_remediation_hint`, and (when present) any
+      `agreement.held_diff.*` text fields (case-insensitive after
+      Unicode NFC) for any AttendingOverridePattern from §2.7. Any
+      match BLOCKs and emits an `attending-override-pattern-detected`
+      audit event (attending_override_denylist).
+
+  - id: PR-INV-17
+    description: >
+      Every PharmRule's `fixity.rule_sha256` MUST equal SHA-256 of
+      the JCS-canonical form of the rule with `fixity` excluded
+      (rule_canonicalization). Validators recompute and compare;
+      mismatch is a release blocker.
+
+  - id: PR-INV-18
+    description: >
+      For every PharmRule whose `population_filter[]` contains
+      `pregnant` or `postpartum` AND `kind == "denylist"`, ALL of the
+      constraints in the PregnancyDenylistConstraints policy clause
+      (a..i) MUST hold. Any violation BLOCKs and emits the
+      corresponding closed audit event from §2.13
+      (`pregnancy-denylist-soft-warning-detected`,
+      `pregnancy-denylist-attending-override-attempt`,
+      `pregnancy-denylist-non-order-select-detected`,
+      `denylist-without-hard-block-basis`).
+
+  - id: PR-INV-19
+    description: >
+      For every PharmRule satisfying PR-INV-18's antecedent (pregnancy
+      denylist), `indicator_set` MUST equal exactly `["critical"]`
+      (no other elements; ordering enforced by JCS canonicalization).
+      Validators MUST refuse any other set.
+
+  - id: PR-INV-20
+    description: >
+      For every PharmRule satisfying PR-INV-18's antecedent, the
+      parent record's `pico_precheck.populations[]` MUST include
+      `pregnant` or `postpartum`. Validators MUST resolve the parent
+      record at validation time; mismatch is a release blocker.
+
+  - id: PR-INV-21
+    description: >
+      `panel_chair_acknowledgement.held_rule_ids_acknowledged[]` MUST
+      NOT contain any rule whose `kind == "denylist"` AND whose
+      `population_filter[]` contains `pregnant` or `postpartum`.
+      Pregnancy denylist held rules are explicitly forbidden from
+      panel-chair acknowledgement; they MUST reach `agreed` before
+      any downstream phase consumes them
+      (panel_chair_acknowledgement_for_held). Validators MUST refuse
+      any rule set whose acknowledgement violates this invariant
+      (this is a clinical safety failure, not a remediation).
+
+  - id: PR-INV-22
+    description: >
+      For state == "sealed":
+        - Every rule's `state` MUST be `advanced`, `held`, or
+          `superseded` (NEVER `pending`, `conflict`, or `rejected`).
+        - If any rule's `state == "held"`, `panel_chair_
+          acknowledgement` MUST be non-null AND
+          `acknowledgement_signoff.verifies` MUST recompute to
+          `true` under `chair.public_key`.
+        - `fixity.rule_set_sha256` MUST equal SHA-256 of the
+          JCS-canonical form with both `fixity` and
+          `acknowledgement_signoff` excluded.
+        - `audit_log[]` MUST contain a `rule-set-sealed` event.
+
+  - id: PR-INV-23
+    description: >
+      For state == "draft":
+        - `panel_chair_acknowledgement` MAY be null.
+        - rules MAY be in any of `pending`, `advanced`, `held`,
+          `conflict`, or `rejected` states; rules in `conflict`
+          MUST be elided from `rules[]` and routed to the queue per
+          conflict_routing.
+        - Validators MUST refuse to transition to `sealed` while any
+          rule is in `pending`, `conflict`, or `rejected`.
+
+  - id: PR-INV-24
+    description: >
+      `audit_log[]` MUST be append-only and ordered by `occurred_at`.
+      Validators compute the chained hash of events; out-of-order or
+      missing events indicate tampering and are release blockers
+      (audit_log_append_only).
+
+  - id: PR-INV-25
+    description: >
+      `predecessor_rule_set_sha256` MUST be set whenever this rule
+      set supersedes a prior one. The predecessor's recorded state
+      (in `predecessor_rule_set_state`) MUST be `superseded` or
+      `withdrawn`. Cycles in the predecessor chain are a release
+      blocker (predecessor_chain).
+
+  - id: PR-INV-26
+    description: >
+      Once state == "sealed" AND fixity is recorded, neither
+      `rules[]`, `panel_chair_acknowledgement`, `state`, `fixity`,
+      `predecessor_*`, `build`, nor `guideline_manifest_ref` may be
+      mutated (post_seal_immutability). Mutation attempts MUST be
+      detected (by recompute of `rule_set_sha256`) and emit
+      `pharm-rules-mutation-attempt`.
+
+  - id: PR-INV-27
+    description: >
+      Every PharmRule's `gate1_cohort_id` MUST resolve to a Gate-1
+      cohort register file in state `finalized` at validation time.
+      Non-finalized cohorts indicate upstream rework not yet
+      completed and BLOCK.
+
+  - id: PR-INV-28
+    description: >
+      Every PharmRule's `verification.verifies` MUST recompute to
+      `true` at every run. Producer claims are not trusted;
+      validators recompute every method in
+      `verification.methods_passed[]` and confirm
+      `verification.methods_failed[]` is empty.
+
+  - id: PR-INV-29
+    description: >
+      For every PharmRule, the parent record's `pico_precheck.
+      populations[]` MUST be compatible with the manifest's
+      `intended_use.age_min_inclusive == 18` (age_gate_eq_18).
+      Pediatric populations are out of scope and a release blocker.
+
+  - id: PR-INV-30
+    description: >
+      For every PharmRule of `kind == "first-line-selection"` whose
+      `trigger == "bp-threshold-met"` or whose `population_filter[]`
+      includes `cad`, `ckd`, `t2dm`, `hf-rEF`, `hf-pEF`, or
+      `post-stroke`, the manifest's pinned `risk_engine.name` MUST be
+      `PREVENT`. The rule MUST NOT cite a `BoundRiskEngine` other
+      than PREVENT.
+
+  - id: PR-INV-31
+    description: >
+      Every PharmRule's `agreement.llm_pair[].response_signature`
+      MUST recompute against the manifest's deterministic-test-prompt
+      response for the corresponding `tools_lock.items[]` entry.
+      Drift indicates LLM rotation outside a manifest version and
+      BLOCKs with `family-distinct-rule-violated`.
+
+# =============================================================================
+# 6. WORKED EXAMPLES (shape-correctness fixtures)
+# -----------------------------------------------------------------------------
+# Two examples are provided:
+#   6.1 A PharmRule of kind "denylist" for pregnancy (the most-restricted
+#       shape; serves as the reference fixture for §3.7 / PR-INV-18..20).
+#   6.2 A PharmRuleSet covering several rules across multiple kinds,
+#       in `sealed` state, with held rules acknowledged by the panel chair
+#       (no pregnancy denylist held; pregnancy denylist is `agreed`).
+#
+# EVERY field whose value can ONLY come from a real Library snapshot,
+# real Gate-1 / Gate-2 cohort, real manifest, real KMS-bound chair,
+# or real build is marked `HUMAN_FILL` with explicit instructions.
+# The pipeline refuses to operate on documents containing `HUMAN_FILL`
+# tokens.
+# =============================================================================
+
+examples:
+
+  # ---------------------------------------------------------------------------
+  # 6.1 PharmRule — pregnancy denylist (RAAS / MRA / direct-renin in pregnancy)
+  # ---------------------------------------------------------------------------
+  - rule_id: "pr-HUMAN_FILL_16HEX"
+    kind: denylist
+    parent_record_id: "rec-HUMAN_FILL_16HEX"
+    parent_atomic_unit_id: "au-HUMAN_FILL_16HEX"
+    gate1_cohort_id: "cohort-HUMAN_FILL_16HEX"
+    acc_aha_cor: III-Harm
+    acc_aha_loe: B-NR
+    drug_classes:
+      - "rxnorm-class:ACE-inhibitor"
+      - "rxnorm-class:ARB"
+      - "rxnorm-class:MRA"
+      - "rxnorm-class:direct-renin-inhibitor"
+    rxnorm_edition_pin: "HUMAN_FILL_RXNORM_EDITION"
+    population_filter: [pregnant, postpartum]
+    trigger: order-select-medication-class
+    consequence: refuse-with-rationale
+    numeric_facts: []
+    anchor_kind: cor-iii-harm-anchor
+    anchors:
+      anchor_kind: cor-iii-harm-anchor
+      sair_sha256: "HUMAN_FILL_64HEX"
+      page: 12
+      bbox: { x0: 0, y0: 0, x1: 0, y1: 0 }
+    posture_at_cds: hard-refuse
+    cds_hook: order-select
+    indicator_set: [critical]
+    attending_override_permitted: false
+    documentation_only: false
+    source_text_verbatim: "HUMAN_FILL: verbatim text of parent atomic unit (no paraphrase)"
+    normalization_log: []
+    rationale: |
+      HUMAN_FILL: source-anchored rationale citing the parent record
+      and atomic unit; no paraphrase of clinical text outside source
+      anchors; NO attending-override semantics.
+    clinical_consequence: |
+      Fetal demise; oligohydramnios; neonatal renal failure on RAAS
+      exposure during pregnancy. Source: 2025 ACC/AHA HBP Guideline,
+      COR III-Harm.
+    bound_risk_engine: { name: PREVENT, legacy_only: false }
+    agreement:
+      state: agreed
+      llm_pair:
+        - { llm_id: "llm-HUMAN_FILL_A", family: openai,    version_pin: "HUMAN_FILL", response_signature: "HUMAN_FILL_64HEX" }
+        - { llm_id: "llm-HUMAN_FILL_B", family: anthropic, version_pin: "HUMAN_FILL", response_signature: "HUMAN_FILL_64HEX" }
+      agreed_llms: ["llm-HUMAN_FILL_A", "llm-HUMAN_FILL_B"]
+      dissenting_llms: []
+      held_diff: null
+      held_remediation_hint: null
+    verification:
+      verifies: true
+      verified_at: "HUMAN_FILL_ISO_DATETIME"
+      methods_passed:
+        - rxnorm-resolution
+        - hard-block-basis-anchor-match
+        - verbatim-roundtrip
+        - attending-override-pattern-scan-clean
+        - pregnancy-constraint-block-pass
+        - canonical-sha-match
+      methods_failed: []
+      failure_notes: null
+    state: advanced
+    superseded_by_rule_id: null
+    fixity:
+      rule_sha256: "HUMAN_FILL_64HEX"
+      computed_at: "HUMAN_FILL_ISO_DATETIME"
+      canonical_form: json-canonical-rfc8785
+
+  # ---------------------------------------------------------------------------
+  # 6.2 PharmRuleSet — sealed; mixed kinds; held first-line-selection rule
+  #     acknowledged by panel chair (NO pregnancy denylist held)
+  # ---------------------------------------------------------------------------
+  - schema_version: "1.0.0"
+    rule_set_id: "prs-HUMAN_FILL_16HEX"
+    rule_set_version: "1.0.0"
+    predecessor_rule_set_sha256: null
+    predecessor_rule_set_state: null
+    guideline_manifest_ref: "guideline-manifest-hbp-2025.v1.0.0+ACC-AHA-2025+US+HUMAN_FILL_DATE.yaml"
+
+    build:
+      run_id: "HUMAN_FILL_UUID"
+      build_version_label: "v1.0.0+ACC-AHA-2025+US+HUMAN_FILL_ISO_DATE"
+      opened_at: "HUMAN_FILL_ISO_DATETIME"
+      sealed_at: "HUMAN_FILL_ISO_DATETIME"
+      manifest_payload_sha256: "HUMAN_FILL_64HEX"
+      records_path: "work/HUMAN_FILL_RUN_ID/records.json"
+      records_sha256: "HUMAN_FILL_64HEX"
+      atomic_units_path: "work/HUMAN_FILL_RUN_ID/atomic-units.json"
+      atomic_units_sha256: "HUMAN_FILL_64HEX"
+      terminology_bindings_path: "work/HUMAN_FILL_RUN_ID/terminology-bindings.json"
+      terminology_bindings_sha256: "HUMAN_FILL_64HEX"
+      bp_thresholds_path: "work/HUMAN_FILL_RUN_ID/bp-thresholds.json"
+      bp_thresholds_sha256: "HUMAN_FILL_64HEX"
+      gate1_register_paths: ["work/HUMAN_FILL_RUN_ID/gate1/cohort-HUMAN_FILL_16HEX.signed.jsonld"]
+      gate1_register_sha256s: ["HUMAN_FILL_64HEX"]
+
+    rules:
+      # Pregnancy denylist — MUST be `agreed` (PR-INV-21 forbids `held`).
+      - { rule_id: "pr-HUMAN_FILL_16HEX", kind: denylist, parent_record_id: "rec-HUMAN_FILL_16HEX", parent_atomic_unit_id: "au-HUMAN_FILL_16HEX", gate1_cohort_id: "cohort-HUMAN_FILL_16HEX", acc_aha_cor: III-Harm, acc_aha_loe: B-NR, drug_classes: ["rxnorm-class:ACE-inhibitor", "rxnorm-class:ARB", "rxnorm-class:MRA", "rxnorm-class:direct-renin-inhibitor"], rxnorm_edition_pin: "HUMAN_FILL_RXNORM_EDITION", population_filter: [pregnant, postpartum], trigger: order-select-medication-class, consequence: refuse-with-rationale, numeric_facts: [], anchor_kind: cor-iii-harm-anchor, anchors: { anchor_kind: cor-iii-harm-anchor, sair_sha256: "HUMAN_FILL_64HEX", page: 12, bbox: { x0: 0, y0: 0, x1: 0, y1: 0 } }, posture_at_cds: hard-refuse, cds_hook: order-select, indicator_set: [critical], attending_override_permitted: false, documentation_only: false, source_text_verbatim: "HUMAN_FILL", normalization_log: [], rationale: "HUMAN_FILL", clinical_consequence: "HUMAN_FILL", bound_risk_engine: { name: PREVENT, legacy_only: false }, agreement: { state: agreed, llm_pair: [ { llm_id: "llm-HUMAN_FILL_A", family: openai, version_pin: "HUMAN_FILL", response_signature: "HUMAN_FILL_64HEX" }, { llm_id: "llm-HUMAN_FILL_B", family: anthropic, version_pin: "HUMAN_FILL", response_signature: "HUMAN_FILL_64HEX" } ], agreed_llms: ["llm-HUMAN_FILL_A","llm-HUMAN_FILL_B"], dissenting_llms: [], held_diff: null, held_remediation_hint: null }, verification: { verifies: true, verified_at: "HUMAN_FILL_ISO_DATETIME", methods_passed: [rxnorm-resolution, hard-block-basis-anchor-match, verbatim-roundtrip, attending-override-pattern-scan-clean, pregnancy-constraint-block-pass, canonical-sha-match], methods_failed: [], failure_notes: null }, state: advanced, superseded_by_rule_id: null, fixity: { rule_sha256: "HUMAN_FILL_64HEX", computed_at: "HUMAN_FILL_ISO_DATETIME", canonical_form: json-canonical-rfc8785 } }
+
+      # AKI triple-whammy (denylist on a non-pregnancy population) — agreed.
+      - { rule_id: "pr-HUMAN_FILL_16HEX", kind: denylist, parent_record_id: "rec-HUMAN_FILL_16HEX", parent_atomic_unit_id: "au-HUMAN_FILL_16HEX", gate1_cohort_id: "cohort-HUMAN_FILL_16HEX", acc_aha_cor: IIa, acc_aha_loe: B-NR, drug_classes: ["rxnorm-class:ACEi-or-ARB","rxnorm-class:loop-or-thiazide-diuretic","rxnorm-class:NSAID"], rxnorm_edition_pin: "HUMAN_FILL_RXNORM_EDITION", population_filter: [general-adult, ckd], trigger: order-select-medication-class, consequence: refuse-with-rationale, numeric_facts: [], anchor_kind: explicit-should-not-anchor, anchors: { anchor_kind: explicit-should-not-anchor, sair_sha256: "HUMAN_FILL_64HEX", page: 33, bbox: { x0: 0, y0: 0, x1: 0, y1: 0 } }, posture_at_cds: hard-refuse, cds_hook: order-select, indicator_set: [critical], attending_override_permitted: false, documentation_only: false, source_text_verbatim: "HUMAN_FILL", normalization_log: [], rationale: "HUMAN_FILL", clinical_consequence: "HUMAN_FILL", bound_risk_engine: { name: PREVENT, legacy_only: false }, agreement: { state: agreed, llm_pair: [ { llm_id: "llm-HUMAN_FILL_A", family: openai, version_pin: "HUMAN_FILL", response_signature: "HUMAN_FILL_64HEX" }, { llm_id: "llm-HUMAN_FILL_B", family: anthropic, version_pin: "HUMAN_FILL", response_signature: "HUMAN_FILL_64HEX" } ], agreed_llms: ["llm-HUMAN_FILL_A","llm-HUMAN_FILL_B"], dissenting_llms: [], held_diff: null, held_remediation_hint: null }, verification: { verifies: true, verified_at: "HUMAN_FILL_ISO_DATETIME", methods_passed: [rxnorm-resolution, hard-block-basis-anchor-match, verbatim-roundtrip, attending-override-pattern-scan-clean, canonical-sha-match], methods_failed: [], failure_notes: null }, state: advanced, superseded_by_rule_id: null, fixity: { rule_sha256: "HUMAN_FILL_64HEX", computed_at: "HUMAN_FILL_ISO_DATETIME", canonical_form: json-canonical-rfc8785 } }
+
+      # Older-adult dose-modifier — held (held_diff illustrates a held shape)
+      - { rule_id: "pr-HUMAN_FILL_16HEX", kind: dose-modifier, parent_record_id: "rec-HUMAN_FILL_16HEX", parent_atomic_unit_id: "au-HUMAN_FILL_16HEX", gate1_cohort_id: "cohort-HUMAN_FILL_16HEX", acc_aha_cor: IIa, acc_aha_loe: B-NR, drug_classes: ["rxnorm-class:thiazide", "rxnorm-class:ACEi"], rxnorm_edition_pin: "HUMAN_FILL_RXNORM_EDITION", population_filter: [older-adult], trigger: order-select-medication-class, consequence: start-low-go-slow, numeric_facts: [], anchor_kind: cor-iia-anchor, anchors: { anchor_kind: cor-iia-anchor, sair_sha256: "HUMAN_FILL_64HEX", page: 41, bbox: { x0: 0, y0: 0, x1: 0, y1: 0 } }, posture_at_cds: soft-warning, cds_hook: order-select, indicator_set: [warning], attending_override_permitted: false, documentation_only: false, source_text_verbatim: "HUMAN_FILL", normalization_log: [], rationale: "HUMAN_FILL", clinical_consequence: "HUMAN_FILL", bound_risk_engine: { name: PREVENT, legacy_only: false }, agreement: { state: held, llm_pair: [ { llm_id: "llm-HUMAN_FILL_A", family: openai, version_pin: "HUMAN_FILL", response_signature: "HUMAN_FILL_64HEX" }, { llm_id: "llm-HUMAN_FILL_B", family: anthropic, version_pin: "HUMAN_FILL", response_signature: "HUMAN_FILL_64HEX" } ], agreed_llms: ["llm-HUMAN_FILL_A"], dissenting_llms: ["llm-HUMAN_FILL_B"], held_diff: { kind_diff: null, drug_classes_diff: { llm_a_only: ["rxnorm-class:thiazide"], llm_b_only: [] }, population_filter_diff: null, trigger_diff: null, consequence_diff: null, numeric_facts_diff: null, anchor_kind_diff: null }, held_remediation_hint: "Re-decompose atomic unit at P9 to clarify whether thiazide alone or in combination triggers start-low-go-slow." }, verification: { verifies: false, verified_at: "HUMAN_FILL_ISO_DATETIME", methods_passed: [verbatim-roundtrip, attending-override-pattern-scan-clean], methods_failed: [], failure_notes: "Held under panel-chair acknowledgement; downstream phases consume as soft-warning informational under the held flag." }, state: held, superseded_by_rule_id: null, fixity: { rule_sha256: "HUMAN_FILL_64HEX", computed_at: "HUMAN_FILL_ISO_DATETIME", canonical_form: json-canonical-rfc8785 } }
+
+    panel_chair_acknowledgement:
+      held_rule_ids_acknowledged: ["pr-HUMAN_FILL_16HEX"]
+      chair:
+        chair_id: "rev-HUMAN_FILL_16HEX"
+        legal_name: "HUMAN_FILL"
+        preferred_credential_string: "HUMAN_FILL"
+        role: panel-chair
+        institution: "HUMAN_FILL"
+        identity_proof:
+          ial: IAL3
+          aal: AAL3
+          proofing_method: "HUMAN_FILL"
+          proofing_evidence_uri: "https://HUMAN_FILL/chair-proof"
+          proofed_at: "HUMAN_FILL_ISO_DATETIME"
+          proofed_by_org: "HUMAN_FILL"
+          proofed_by_person: null
+        public_key:
+          algorithm: Ed25519
+          key_id: "HUMAN_FILL"
+          key_pem: "HUMAN_FILL"
+          fingerprint_sha256: "HUMAN_FILL_64HEX"
+      acknowledged_at: "HUMAN_FILL_ISO_DATETIME"
+      acknowledgement_signoff:
+        algorithm: Ed25519
+        key_id: "HUMAN_FILL"
+        payload_canonical_form: json-canonical-rfc8785
+        payload_sha256: "HUMAN_FILL_64HEX"
+        signature_b64: "HUMAN_FILL_BASE64"
+        time_stamp:
+          tsa_name: "HUMAN_FILL"
+          tsa_url: "https://HUMAN_FILL/tsa"
+          tsa_cert_fingerprint_sha256: "HUMAN_FILL_64HEX"
+          time: "HUMAN_FILL_ISO_DATETIME"
+          token_b64: "HUMAN_FILL_BASE64"
+        verifies: true
+
+    state: sealed
+
+    audit_log:
+      - { event_id: "evt-HUMAN_FILL_16HEX", occurred_at: "HUMAN_FILL_ISO_DATETIME", kind: rule-set-drafted,                actor_id: "HUMAN_FILL", payload_sha256: "HUMAN_FILL_64HEX", prov_activity_id: "HUMAN_FILL" }
+      - { event_id: "evt-HUMAN_FILL_16HEX", occurred_at: "HUMAN_FILL_ISO_DATETIME", kind: rule-extracted,                  actor_id: "HUMAN_FILL", payload_sha256: "HUMAN_FILL_64HEX", prov_activity_id: "HUMAN_FILL" }
+      - { event_id: "evt-HUMAN_FILL_16HEX", occurred_at: "HUMAN_FILL_ISO_DATETIME", kind: rule-verified,                   actor_id: "HUMAN_FILL", payload_sha256: "HUMAN_FILL_64HEX", prov_activity_id: "HUMAN_FILL" }
+      - { event_id: "evt-HUMAN_FILL_16HEX", occurred_at: "HUMAN_FILL_ISO_DATETIME", kind: rule-routed-to-queue,            actor_id: "HUMAN_FILL", payload_sha256: "HUMAN_FILL_64HEX", prov_activity_id: "HUMAN_FILL" }
+      - { event_id: "evt-HUMAN_FILL_16HEX", occurred_at: "HUMAN_FILL_ISO_DATETIME", kind: rule-set-awaiting-panel-chair,   actor_id: "HUMAN_FILL", payload_sha256: "HUMAN_FILL_64HEX", prov_activity_id: "HUMAN_FILL" }
+      - { event_id: "evt-HUMAN_FILL_16HEX", occurred_at: "HUMAN_FILL_ISO_DATETIME", kind: rule-set-acknowledged-by-chair,  actor_id: "rev-HUMAN_FILL_16HEX", payload_sha256: "HUMAN_FILL_64HEX", prov_activity_id: "HUMAN_FILL" }
+      - { event_id: "evt-HUMAN_FILL_16HEX", occurred_at: "HUMAN_FILL_ISO_DATETIME", kind: rule-set-sealed,                 actor_id: "HUMAN_FILL", payload_sha256: "HUMAN_FILL_64HEX", prov_activity_id: "HUMAN_FILL" }
+
+    fixity:
+      rule_set_sha256: "HUMAN_FILL_64HEX"
+      computed_at: "HUMAN_FILL_ISO_DATETIME"
+      canonical_form: json-canonical-rfc8785
+
+# =============================================================================
+# 7. CHANGE CONTROL
+# -----------------------------------------------------------------------------
+# Any change to this schema (closed enums, the per-kind constraint
+# matrix, the AttendingOverridePattern denylist, the
+# PregnancyDenylistConstraints, the dual-LLM family-distinct
+# agreement structure, the panel-chair acknowledgement structure
+# (especially the prohibition on pregnancy-denylist held-rule
+# acknowledgement), the post-seal immutability rules, validation
+# rules, invariants, or example fixtures) requires:
+#   - A change-controlled diff with regression evaluation against the
+#     golden pharm-rule set.
+#   - Panel-chair signoff AND medical-director acknowledgement (since
+#     this schema directly governs the rule-extraction layer that
+#     feeds the prescribing-surface wiring of safety-critical
+#     hard-blocks).
+#   - Increment of `schema_version` (semver: breaking = major).
+#   - Update of `last_reviewed`.
+#   - Coordinated update of every producing/consuming skill's
+#     tools_lock reference and acceptance-test fixtures.
+#   - Any change to: closed_rule_kind_set; closed_support_enums;
+#     dual_llm_family_distinct_agreement; hard_block_basis_for_denylist;
+#     pregnancy_denylist_constraint_block; attending_override_denylist;
+#     pce_legacy_never_feeds_rules; rxnorm_pin_alignment;
+#     numeric_fact_integrity; verbatim_integrity;
+#     panel_chair_acknowledgement_for_held; conflict_routing;
+#     deterministic_id_derivation; rule_canonicalization;
+#     rule_set_canonicalization; post_seal_immutability;
+#     predecessor_chain; or audit_log_append_only requires ALSO an
+#     ADR-HTN-001 amendment with documented rationale and a new
+#     medical-director signoff.
+# =============================================================================
+
+change_control:
+  semver: true
+  golden_set_regression_required: true
+  panel_chair_signoff_required: true
+  medical_director_acknowledgement_required: true
+  parent_schemas_to_update_on_breaking_change:
+    - cpg-htn-2025-acc-aha/schemas/recommendation-record-htn.yaml
+    - cpg-htn-2025-acc-aha/schemas/atomic-unit.yaml
+    - cpg-htn-2025-acc-aha/schemas/sair.yaml
+    - cpg-htn-2025-acc-aha/schemas/gate1-register.yaml
+    - cpg-htn-2025-acc-aha/schemas/gate2-register.yaml
+    - cpg-htn-2025-acc-a

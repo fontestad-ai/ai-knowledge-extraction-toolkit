@@ -68,5 +68,6 @@ async def root():
                 "from uploaded guideline files"
             ),
             "examples": "/clinical/examples - List bundled guideline example assets",
+            "runs": "/clinical/runs - List locally persisted SQLite extraction runs",
         },
     }

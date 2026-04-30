@@ -3,12 +3,14 @@
 from __future__ import annotations
 
 import mimetypes
+import os
 import shutil
 import tempfile
 from dataclasses import asdict, is_dataclass
 from pathlib import Path
 from typing import Any
 from urllib.parse import quote
+from zipfile import ZipFile
 
 import fitz
 from fastapi import APIRouter, File, Form, HTTPException, UploadFile
@@ -16,13 +18,14 @@ from fastapi.responses import FileResponse
 from pydantic import BaseModel
 
 try:
-    from utils import get_api_config, validate_file_size
+    from utils import validate_file_size
 except ImportError:
-    from api.utils import get_api_config, validate_file_size
+    from api.utils import validate_file_size
 
 from gaik.software_modules.clinical_guidelines_to_structured_data import (
     DEFAULT_HYPERTENSION_EXTRACTION_REQUIREMENTS,
     ClinicalGuidelineKnowledgeExtractor,
+    ClinicalSQLiteStore,
 )
 
 router = APIRouter()
@@ -36,9 +39,13 @@ SUPPORTED_FILE_SUFFIXES = {
     ".png",
     ".jpg",
     ".jpeg",
+    ".zip",
 }
 SUPPORTED_PARSER_CHOICES = {
     "auto",
+    "pdf_text",
+    "pptx_text",
+    "local_image",
     "multimodal",
     "vision_plus",
     "vision_parser",
@@ -59,6 +66,18 @@ class ClinicalExampleAsset(BaseModel):
 
 class ClinicalExamplesResponse(BaseModel):
     examples: list[ClinicalExampleAsset]
+
+
+class ClinicalRunsResponse(BaseModel):
+    runs: list[dict[str, Any]]
+
+
+def _get_store() -> ClinicalSQLiteStore:
+    db_path = os.getenv(
+        "CLINICAL_SQLITE_PATH",
+        str(Path(__file__).resolve().parents[1] / "data" / "clinical.sqlite3"),
+    )
+    return ClinicalSQLiteStore(db_path)
 
 
 def _ensure_supported_file(filename: str | None) -> str:
@@ -119,11 +138,39 @@ def _render_source_pages(file_suffix: str, content: bytes) -> list[bytes] | None
     return pages or None
 
 
+def _select_zip_member(zip_path: Path, destination: Path) -> Path:
+    with ZipFile(zip_path) as archive:
+        candidates: list[Path] = []
+        for member in archive.infolist():
+            if member.is_dir() or member.filename.startswith("__MACOSX/"):
+                continue
+            member_name = Path(member.filename)
+            if member_name.suffix.lower() not in SUPPORTED_FILE_SUFFIXES - {".zip"}:
+                continue
+            target = (destination / member_name.name).resolve()
+            try:
+                target.relative_to(destination.resolve())
+            except ValueError as exc:
+                raise HTTPException(status_code=400, detail="Unsafe zip member path") from exc
+            with archive.open(member) as source, open(target, "wb") as output:
+                shutil.copyfileobj(source, output)
+            candidates.append(target)
+        if not candidates:
+            raise HTTPException(
+                status_code=400,
+                detail="Zip archive did not contain a supported guideline file",
+            )
+        return sorted(candidates, key=lambda path: path.name)[0]
+
+
 def _to_jsonable(value: Any) -> Any:
     if value is None:
         return None
     if hasattr(value, "model_dump"):
-        return value.model_dump(mode="json")
+        try:
+            return value.model_dump(mode="json")
+        except TypeError:
+            return value.model_dump()
     if is_dataclass(value):
         return asdict(value)
     return value
@@ -141,6 +188,22 @@ async def get_example_file(filename: str) -> FileResponse:
     file_path = _resolve_example_path(filename)
     media_type = mimetypes.guess_type(file_path.name)[0] or "application/octet-stream"
     return FileResponse(file_path, media_type=media_type, filename=file_path.name)
+
+
+@router.get("/runs", response_model=ClinicalRunsResponse)
+async def list_runs(limit: int = 50) -> ClinicalRunsResponse:
+    """List locally persisted extraction runs."""
+    normalized_limit = max(1, min(limit, 200))
+    return ClinicalRunsResponse(runs=_get_store().list_runs(limit=normalized_limit))
+
+
+@router.get("/runs/{run_id}")
+async def get_run(run_id: str) -> dict[str, Any]:
+    """Return one locally persisted extraction run."""
+    run = _get_store().get_run(run_id)
+    if run is None:
+        raise HTTPException(status_code=404, detail="Clinical extraction run not found")
+    return run
 
 
 @router.post("/extract")
@@ -166,31 +229,63 @@ async def extract_clinical_guideline(
 
     try:
         temp_path.write_bytes(content)
-        source_pages = _render_source_pages(suffix, content) if validate_extraction else None
+        extraction_path = temp_path
+        extraction_suffix = suffix
+        extraction_content = content
+        if suffix == ".zip":
+            extraction_path = _select_zip_member(temp_path, temp_dir)
+            extraction_suffix = extraction_path.suffix.lower()
+            extraction_content = extraction_path.read_bytes()
+
+        source_pages = (
+            _render_source_pages(extraction_suffix, extraction_content)
+            if validate_extraction
+            else None
+        )
         if validate_extraction and not source_pages:
             raise HTTPException(
                 status_code=400,
                 detail="Validation is currently available for PDF and image uploads only.",
             )
 
-        extractor = ClinicalGuidelineKnowledgeExtractor(api_config=get_api_config())
+        extractor = ClinicalGuidelineKnowledgeExtractor()
         result = extractor.run(
-            file_path=temp_path,
+            file_path=extraction_path,
             parser_choice=parser_choice,
             operationalize=operationalize,
             validate=validate_extraction,
             source_pages=source_pages,
-            source_document_id=temp_path.name,
+            source_document_id=extraction_path.name,
+        )
+        store = _get_store()
+        run_id = store.save_run(
+            source_file=extraction_path.name,
+            parser_choice=result.parser_choice,
+            extraction_backend=result.extraction_backend,
+            parsed_documents=result.parsed_documents,
+            extracted_knowledge=result.extracted_knowledge,
+            operationalized_knowledge=result.operationalized_knowledge,
+            validation=result.validation,
+            quality_report=result.quality_report,
         )
 
         return {
-            "source_file": temp_path.name,
+            "run_id": run_id,
+            "source_file": extraction_path.name,
+            "uploaded_file": temp_path.name,
             "parser_choice": result.parser_choice,
+            "extraction_backend": result.extraction_backend,
             "route": _to_jsonable(result.route),
             "parsed_documents": result.parsed_documents,
             "extracted_knowledge": result.extracted_knowledge,
             "operationalized_knowledge": _to_jsonable(result.operationalized_knowledge),
             "validation": _to_jsonable(result.validation),
+            "quality_report": _to_jsonable(result.quality_report),
+            "persistence": {
+                "sqlite": True,
+                "sqlite_vec_ready": True,
+                "run_id": run_id,
+            },
         }
     except HTTPException:
         raise

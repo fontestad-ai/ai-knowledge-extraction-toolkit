@@ -289,9 +289,9 @@ version_scheme = "no-guess-dev"
 local_scheme = "no-local-version"
 
 
-# Include type hints marker file and SQL reference scripts in package
+# Include type hints marker file, SQL reference scripts, and packaged clinical contracts
 [tool.setuptools.package-data]
-gaik = ["py.typed", "**/*.sql"]
+gaik = ["py.typed", "**/*.sql", "**/*.md", "**/*.yaml", "**/*.yml"]
 
 # Ruff linter/formatter settings (not installed, used when running `ruff check`)
 [tool.ruff]
@@ -317,7 +317,6 @@ ignore = []
 [tool.pytest.ini_options]
 testpaths = ["implementation_layer/unit_tests"]
 addopts = ["-v", "--strict-markers"]
-
 
 
 

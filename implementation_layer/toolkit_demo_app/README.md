@@ -6,8 +6,9 @@ Standalone frontend and API surface for the clinical guideline extraction workfl
 
 - Upload clinical guideline PDFs, Office files, or page images
 - Load bundled example files from `/home/runner/work/ai-knowledge-extraction-toolkit/ai-knowledge-extraction-toolkit/uploads`
-- Extract source-grounded hypertension knowledge with the existing clinical framework
+- Extract source-grounded hypertension knowledge with an LMCLI-first local framework
 - Review parsed source text, structured extraction output, and operationalized clinical units
+- Persist extraction runs, clinical units, RAG text, and graph projections in local SQLite
 - Optionally trigger validation when validator extras are available
 
 ## Quick Start
@@ -16,7 +17,7 @@ Standalone frontend and API surface for the clinical guideline extraction workfl
 
 - Node.js 20+
 - Python 3.11+
-- Azure OpenAI or OpenAI credentials
+- Optional local LMCLI command configured by `CLINICAL_LMCLI_COMMAND`
 
 ### Setup
 
@@ -47,6 +48,7 @@ uvicorn main:app --reload
 | `/health` | Health check |
 | `/clinical/extract` | Clinical guideline extraction |
 | `/clinical/examples` | Bundled example asset listing |
+| `/clinical/runs` | Locally persisted SQLite extraction run listing |
 
 ## Notes
 
@@ -61,12 +63,14 @@ Removed from the current frontend shell:
 - Upstash Redis rate limiting
 - PostHog analytics and remote widget bootstraps
 
-Still external in the active clinical extraction path:
+Still present in broader toolkit dependencies, but not called by the active clinical path:
 
-- Azure OpenAI or OpenAI via the current `gaik` clinical extraction pipeline
+- OpenAI/Azure SDK dependencies remain in the reusable `gaik` toolkit package
+- OpenAI/Azure-capable parsers are disabled in the standalone clinical UI/API defaults
 
-Local replacement target:
+Local replacement implemented for the active clinical path:
 
+- LMCLI-first extraction via `CLINICAL_LMCLI_COMMAND`
+- Conservative deterministic local extraction fallback when LMCLI is absent
 - SQLite for local persistence
-- sqlite-vec (or equivalent SQLite vector extension) if vector search is added later
-- LMCLI-backed extraction should be the next step if you want zero third-party model calls
+- sqlite-vec-ready RAG rows with local embedding slots for future vector search

@@ -20,10 +20,10 @@ def test_module_import_and_schema_shape():
 def test_auto_parser_selection_by_extension():
     extractor = ClinicalGuidelineKnowledgeExtractor(api_config={"model": "test", "api_key": "x"})
 
-    assert extractor._select_parser_choice("guideline.pdf", "auto") == "multimodal"
-    assert extractor._select_parser_choice("protocol.pptx", "auto") == "docling"
+    assert extractor._select_parser_choice("guideline.pdf", "auto") == "pymupdf"
+    assert extractor._select_parser_choice("protocol.pptx", "auto") == "pptx_text"
     assert extractor._select_parser_choice("protocol.docx", "auto") == "docx"
-    assert extractor._select_parser_choice("scan.jpeg", "auto") == "vision_parser"
+    assert extractor._select_parser_choice("scan.jpeg", "auto") == "local_image"
 
 
 def test_coerce_parsed_output_prefers_known_text_fields():
@@ -66,8 +66,8 @@ def test_adaptive_route_prefers_local_first_with_multimodal_fallback():
     route = extractor._plan_adaptive_route("guideline.pdf", "auto")
 
     assert route.selected_parser == "pymupdf"
-    assert route.candidate_parsers == ["pymupdf", "docling", "multimodal"]
-    assert "multimodal" in route.fallback_parsers
+    assert route.candidate_parsers == ["pymupdf"]
+    assert "deterministic local PyMuPDF" in route.escalation_reason
 
 
 def test_operationalization_builds_atomic_units_and_downstream_projections():

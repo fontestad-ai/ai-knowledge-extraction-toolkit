@@ -1,0 +1,1940 @@
+# =============================================================================
+# gate2-register.yaml
+# -----------------------------------------------------------------------------
+# Standalone schema for the Gate 2 cohort register — the auditable, signed,
+# append-only ledger of Library-scoped clinician + informaticist signoffs
+# that gate every CQL Library before it advances to Phase 22 (CDS Hooks
+# packaging) and Phase 28 (publication).
+#
+# This file is the contract for:
+#   - Cohort identity (a named batch of CQL Libraries under review).
+#   - Reviewer credential evidence (named individuals, board certifications,
+#     identity proofing, conflicts of interest) — same primitives as
+#     gate1-register.yaml but scoped to Library reviews.
+#   - Per-Library reviewer signoffs (decisions, rationales, COI re-attestations,
+#     concern categories, signatures) — NEVER edits to Library content.
+#   - Cohort-axis informatics signoff (one per cohort) covering provenance
+#     integrity, terminology pin consistency, FHIR-IG version alignment, and
+#     CDS-Hooks service-Library wiring readiness.
+#   - Hard-block invariants registry for each Library (the pregnancy
+#     denylist, the PREVENT canonicalization, the age gate, etc.) with
+#     reference-test verification pointers.
+#   - Coverage-floor invariants (95% Synthea branch coverage per Library).
+#   - Panel-chair cohort signoff.
+#   - Cryptographic signature envelope (Ed25519 / ECDSA-P256-SHA256 over
+#     RFC 8785 JCS canonical payload, RFC 3161 time-stamp).
+#   - Post-signoff immutability rules (no mutation of signed Library
+#     content; corrections require a new Library snapshot with a new
+#     library_content_hash and a fresh signoff).
+#
+# Posture: caution over velocity, fidelity over coverage. Every signature
+# is verified, never trusted. Every reviewer is a named, credential-evidenced
+# individual, not a role token. Every decision is on a single Library, never
+# on a batch. Every hard-block-relax proposal is auto-routed to reject-rework
+# regardless of clinical rationale; the schema makes the rule machine-checkable.
+# Below the 95% coverage floor, the Library cannot advance.
+#
+# This file does NOT contain CQL source. It records WHO signed WHICH Library
+# at WHAT content hash and WHEN, against the typecheck and coverage reports
+# computed by `emit-cql-htn` and `cql-test-synthea-htn`. CQL source lives
+# in work/<run_id>/cql/<library_id>/ ; this file points to it.
+#
+# Authority:
+#   - ADR-HTN-001 D5 (PREVENT canonical risk function)
+#   - ADR-HTN-001 D8 (pregnancy hard-block enforced at order-select)
+#   - ADR-HTN-001 D9 (three non-overridable human gates; Gate 2 enforces
+#     two-independent-reviewer signoff per Library, panel-chair cohort
+#     signoff)
+#   - ADR-HTN-001 D10 (PHI fail-closed; copyright envelope respected;
+#     these are upstream/sibling concerns but the manifest reference is
+#     consulted at sign time)
+#   - ADR-HTN-001 D11 (Synthea-only test data; the coverage report is
+#     against Synthea cohorts only)
+#   - ADR-HTN-001 D14 (supersession chain; predecessor 2017 advisory)
+#   - Framework spec §7 (CDS Hooks; pregnancy denylist as order-select)
+#   - Framework spec §9 (CQL Libraries; the nine canonical Libraries)
+#   - Framework spec §10 (Synthea cohort coverage floor)
+#   - `cql-clinician-signoff` SKILL.md (the only authorized writer)
+#   - Parent framework rules: `god-session`, `human-authorization`,
+#     `native-ux-tools`
+#
+# Relationship to neighboring schemas (separate files, referenced by $ref):
+#   - schemas/recommendation-record-htn.yaml   (each Library entry references
+#                                              the consumed RecommendationRecord
+#                                              ids by content hash)
+#   - schemas/atomic-unit.yaml                 (referenced for atomic-unit
+#                                              consumption by Libraries)
+#   - schemas/sair.yaml                        (referenced for source anchors
+#                                              the reviewers may navigate to
+#                                              as context)
+#   - schemas/acc-aha-grading.yaml             (closed COR/LOE enums; cited
+#                                              for the no-grade-relax rule)
+#   - schemas/gate1-register.yaml              (the prerequisite Gate 1
+#                                              register; this register
+#                                              cannot finalize without
+#                                              every contributing Gate 1
+#                                              cohort being finalized)
+#   - schemas/guideline-manifest-hbp-2025.yaml (per-build manifest;
+#                                              terminology editions,
+#                                              risk_engine pin, tsa_list,
+#                                              quote envelope, intended use,
+#                                              and signature_policy are
+#                                              consulted)
+# =============================================================================
+
+$schema: "https://json-schema.org/draft/2020-12/schema"
+$id: "https://aiwg.io/cpg-htn-2025-acc-aha/schemas/gate2-register.yaml"
+title: "Gate2Register"
+description: >
+  Auditable, signed, append-only register of Gate 2 Library reviews for a
+  cohort of CQL Libraries derived from a single guideline manifest. Each
+  register entry binds a named reviewer with credential evidence to a
+  content-hash signature on a single Library snapshot. Cohort-level
+  finality requires a panel-chair signoff and a cohort-axis informatics
+  signoff. Post-signoff Library content is immutable; corrections require
+  a new Library snapshot with explicit predecessor chain and a fresh
+  signoff against the new library_content_hash.
+version: "1.0.0"
+schema_lifecycle: stable
+last_reviewed: "HUMAN_FILL: ISO-8601 date of most recent panel review of this schema"
+authority:
+  adr: ADR-HTN-001
+  framework: cpg-htn-2025-acc-aha
+  parent_framework: aiwg-training
+license: MIT
+
+# -----------------------------------------------------------------------------
+# 1. POLICY (normative)
+# -----------------------------------------------------------------------------
+
+policy:
+
+  reviewer_composition:
+    rule: >
+      Every advanced Library MUST carry exactly two independent reviewer
+      signoffs from distinct, non-overlapping roles per the Gate-2
+      composition matrix. The hypertension specialist appears on every
+      Library except `PregnancyHTN`, which is reviewed by MFM (or
+      obstetric medicine) plus clinical pharmacology. The clinical
+      informaticist additionally co-signs every Library on the cohort
+      axis (a single CohortAxisSignoff per cohort), not as a per-Library
+      reviewer except where the matrix below names them.
+    matrix:
+      - library_name_glob: "HBPStaging"
+        domain: classification
+        required_roles: [hypertension-specialist, clinical-informaticist]
+      - library_name_glob: "TreatmentThreshold"
+        domain: pharmacologic-general
+        required_roles: [hypertension-specialist, clinical-informaticist]
+      - library_name_glob: "PreventRisk"
+        domain: risk-stratification
+        required_roles: [hypertension-specialist, clinical-informaticist]
+      - library_name_glob: "FirstLineSelection"
+        domain: pharmacologic-general
+        required_roles: [hypertension-specialist, clinical-pharmacologist]
+      - library_name_glob: "SpecialPopulationModifiers"
+        domain: special-populations-modifiers
+        required_roles: [hypertension-specialist, clinical-pharmacologist]
+      - library_name_glob: "PregnancyHTN"
+        domain: pregnancy-postpartum
+        required_roles: [mfm-or-obstetric-medicine, clinical-pharmacologist]
+        notes: >
+          The hypertension specialist may also appear; the schema accepts
+          up to four signoffs to accommodate institutional policy that
+          requires three signatures on pregnancy Libraries.
+      - library_name_glob: "ResistantHTN"
+        domain: resistant-htn
+        required_roles: [hypertension-specialist, clinical-pharmacologist]
+      - library_name_glob: "SecondaryHTNTriggers"
+        domain: secondary-htn
+        required_roles:
+          - hypertension-specialist
+          - "(nephrology OR endocrinology)"
+      - library_name_glob: "HypertensiveUrgencyEmergency"
+        domain: urgency-emergency
+        required_roles:
+          - hypertension-specialist
+          - "(emergency-medicine OR critical-care)"
+    cohort_axis_attestation:
+      role: clinical-informaticist
+      scope: >
+        Provenance integrity across all Libraries; terminology pin
+        consistency; FHIR-IG version alignment; CDS-Hooks service-Library
+        wiring readiness.
+      required: true
+
+  no_batch_acceptance:
+    rule: >
+      No reviewer may sign more than one Library per signature payload.
+      Each Library requires its own signature against its own
+      library_content_hash. Batch acceptance is forbidden.
+
+  no_edit_at_gate2:
+    rule: >
+      Gate 2 has no `accept-with-edit` mode. Library content (CQL source,
+      ELM, value-set bindings, risk-engine bindings, hard-block invariants,
+      denylists, age gates) is read-only at this gate. Any reviewer
+      proposal to change Library content MUST be expressed as
+      `reject-rework` with a closed concern category and a free-text
+      rationale. The orchestrator consumes the rework signal, re-authors
+      the Library upstream at P20, regenerates coverage at P21, and
+      re-posts the new Library snapshot to a fresh register entry. The
+      reviewer's prior signoff is invalidated by the new
+      library_content_hash and a new signoff is required.
+
+  no_relax_of_hard_block:
+    rule: >
+      No reviewer signoff (rationale, comment, or concern) may propose:
+        - converting an `order-select` hard refusal to a soft warning,
+        - removing a class from a Library's denylist (notably the
+          pregnancy denylist for ACEi, ARB, MRA, direct renin inhibitor),
+        - replacing PREVENT with PCE-legacy in any Library binding a
+          risk engine,
+        - lowering the age gate below 18,
+        - adding an attending-override or "permit on attending override"
+          branch to any denylist or hard-block.
+      Such proposals MUST be auto-rewritten to `reject-rework` with the
+      rationale prefixed "Auto-rewrite per `no_relax_of_hard_block`."
+      Validators MUST detect attempted hard-block-relax decisions
+      sneaking in via direct API as `gate2-edit-attempt` events.
+
+  coverage_floor:
+    rule: >
+      No Library may advance with branch coverage below 95.0% on the
+      pinned Synthea cohort. The coverage report is recomputed at sign
+      time from work/<run_id>/cql/coverage/<library_id>.json and
+      compared byte-for-byte (or aggregate-metric-equal under
+      `eq-tolerance` recorded on the runtime, where the runtime is
+      declared `nondeterministic` in `tools_lock`) to the recorded
+      report. Mismatch is a release blocker.
+
+  typecheck_clean:
+    rule: >
+      No Library may advance with any typecheck error or with any
+      typecheck warning that the manifest's policy promotes to error.
+      The typecheck report is recomputed at sign time and compared to
+      the recorded report.
+
+  hard_block_verification:
+    rule: >
+      Every Library's declared hard-block invariants MUST be verified
+      by at least one reference test in the Library's reference-test
+      pack. Unverified hard-blocks are a release blocker. The schema
+      records the verification pointer per invariant.
+
+  cor_loe_immutable_at_gate2:
+    rule: >
+      ACC/AHA COR and LOE values, atomic-recommendation spans, and
+      atomic-unit inheritance are read-only at Gate 2 (they were
+      finalized at Gate 1). Validators MUST refuse any signoff whose
+      payload references altered COR/LOE on any consumed
+      RecommendationRecord.
+
+  post_signoff_immutability:
+    rule: >
+      Once a `LibrarySignoff` is recorded with `decision ∈ {accept,
+      accept-with-comment}`, neither its `signature` nor the
+      `library_content_hash` it signed may be mutated. Any change to the
+      underlying Library produces a new snapshot with a new content hash
+      and requires a new `LibrarySignoff` against that new hash. The old
+      signoff is retained immutably for audit.
+
+  panel_chair_signoff:
+    rule: >
+      Cohort finality requires a `PanelChairSignoff` over the cohort's
+      manifest hash (the SHA-256 over the JCS-canonical form of
+      `libraries[]` ordered by `library_id` ascending). The panel chair
+      is a named individual with credential evidence; their signoff
+      disposes of escalations and certifies composition compliance,
+      coverage-floor satisfaction, hard-block-invariant verification,
+      and the cohort-axis informatics signoff presence.
+
+  conflict_of_interest:
+    rule: >
+      Every reviewer (and the panel chair) MUST disclose a current
+      Conflict of Interest (COI) statement. A reviewer with an
+      undisclosed or material COI on a Library's subject (e.g., a
+      pharmaceutical relationship for `FirstLineSelection`,
+      `SpecialPopulationModifiers`, `PregnancyHTN`, or `ResistantHTN`) is
+      automatically disqualified for that Library; the disqualification
+      is recorded as a register entry of state `recused`, and a
+      substitute reviewer of the same role is required.
+
+  identity_proofing:
+    rule: >
+      Every reviewer's identity MUST be proofed at NIST SP 800-63 IAL2
+      or higher. Reviewers with role `panel-chair` or `medical-director`
+      MUST be at IAL3/AAL3.
+
+  signature_algorithm:
+    rule: >
+      Signatures use Ed25519 (default) or ECDSA-P256-SHA256 over the
+      canonical JCS (RFC 8785) form of the signed payload. The algorithm
+      and key identifier are pinned per cohort in the active manifest;
+      mismatch is a release blocker.
+
+  time_stamping:
+    rule: >
+      Every signoff carries an RFC 3161 time-stamp from a TSA pinned in
+      the active manifest's `tsa_list[]`. Time-stamp absence is a
+      release blocker.
+
+# -----------------------------------------------------------------------------
+# 2. CLOSED ENUMERATIONS
+# -----------------------------------------------------------------------------
+
+$defs:
+
+  # ---------------------------------------------------------------------------
+  # 2.1 Library identity (closed set; matches framework spec §9)
+  # ---------------------------------------------------------------------------
+  LibraryName:
+    type: string
+    enum:
+      - HBPStaging
+      - PreventRisk
+      - TreatmentThreshold
+      - FirstLineSelection
+      - SpecialPopulationModifiers
+      - PregnancyHTN
+      - ResistantHTN
+      - SecondaryHTNTriggers
+      - HypertensiveUrgencyEmergency
+
+  LibraryDomain:
+    type: string
+    enum:
+      - classification
+      - risk-stratification
+      - pharmacologic-general
+      - special-populations-modifiers
+      - pregnancy-postpartum
+      - resistant-htn
+      - secondary-htn
+      - urgency-emergency
+
+  # ---------------------------------------------------------------------------
+  # 2.2 Reviewer roles
+  # ---------------------------------------------------------------------------
+  ReviewerRole:
+    type: string
+    enum:
+      - hypertension-specialist
+      - clinical-pharmacologist
+      - mfm-or-obstetric-medicine
+      - geriatrician
+      - primary-care-clinician
+      - clinical-informaticist
+      - nephrology
+      - endocrinology
+      - emergency-medicine
+      - critical-care
+      - panel-chair
+      - medical-director
+
+  # ---------------------------------------------------------------------------
+  # 2.3 Reviewer decisions (Gate 2; note absence of accept-with-edit)
+  # ---------------------------------------------------------------------------
+  ReviewerDecision:
+    type: string
+    enum:
+      - accept
+      - accept-with-comment
+      - reject-rework
+      - escalate-panel
+      - recused
+    description: >
+      Gate 2 deliberately omits `accept-with-edit`. Any change to Library
+      content is `reject-rework`, which signals the orchestrator to
+      re-author at P20.
+
+  # ---------------------------------------------------------------------------
+  # 2.4 Concern categories (closed; surface a substantive concern without edit)
+  # ---------------------------------------------------------------------------
+  ConcernCategory:
+    type: string
+    enum:
+      - boundary-too-permissive
+      - boundary-too-restrictive
+      - mapping-incorrect
+      - denylist-incomplete
+      - coverage-gap
+      - hard-block-relax-attempted   # auto-detected; recorded for audit
+      - documentation-only
+      - other
+    description: >
+      Closed-by-policy concern categories. Any category other than
+      `documentation-only` automatically proposes `reject-rework`.
+      `hard-block-relax-attempted` is recorded by the auto-routing
+      machinery on detection of a hard-block-relax proposal; reviewers
+      do not select it directly.
+
+  # ---------------------------------------------------------------------------
+  # 2.5 Identity assurance
+  # ---------------------------------------------------------------------------
+  IdentityAssuranceLevel:
+    type: string
+    enum: [IAL1, IAL2, IAL3]
+
+  AuthenticatorAssuranceLevel:
+    type: string
+    enum: [AAL1, AAL2, AAL3]
+
+  # ---------------------------------------------------------------------------
+  # 2.6 Credential kinds
+  # ---------------------------------------------------------------------------
+  CredentialKind:
+    type: string
+    enum:
+      - abim-certification
+      - abp-certification
+      - abfm-certification
+      - abem-certification
+      - aoa-board-certification
+      - ash-hypertension-specialist
+      - amia-ciip
+      - abpm-clinical-informatics
+      - bccp-pharmacy
+      - bcps-aq-cardiology
+      - mfm-board-certification
+      - geriatric-medicine-board-certification
+      - nephrology-board-certification
+      - endocrinology-board-certification
+      - critical-care-board-certification
+      - state-medical-license
+      - institutional-credential
+      - other
+
+  # ---------------------------------------------------------------------------
+  # 2.7 Conflict-of-interest kinds
+  # ---------------------------------------------------------------------------
+  COIKind:
+    type: string
+    enum:
+      - none
+      - financial-pharmaceutical
+      - financial-device
+      - research-grant
+      - speakers-bureau
+      - consultancy
+      - equity-holding
+      - employment-related
+      - family-relationship
+      - publication-author
+      - guideline-author
+      - other
+
+  # ---------------------------------------------------------------------------
+  # 2.8 Signature algorithms
+  # ---------------------------------------------------------------------------
+  SignatureAlgorithm:
+    type: string
+    enum:
+      - Ed25519
+      - ECDSA-P256-SHA256
+
+  # ---------------------------------------------------------------------------
+  # 2.9 Cohort lifecycle
+  # ---------------------------------------------------------------------------
+  CohortState:
+    type: string
+    enum:
+      - draft
+      - in-review
+      - awaiting-cohort-axis
+      - awaiting-panel-chair
+      - finalized
+      - superseded
+      - withdrawn
+    description: >
+      `awaiting-cohort-axis` is reached when every per-Library signoff
+      pair is complete but the cohort-axis informatics signoff has not
+      yet been recorded. `awaiting-panel-chair` is reached when both
+      per-Library and cohort-axis are complete but the panel-chair
+      signoff has not yet been recorded. `finalized` is terminal for a
+      register version.
+
+  # ---------------------------------------------------------------------------
+  # 2.10 Per-Library disposition states
+  # ---------------------------------------------------------------------------
+  LibraryDispositionState:
+    type: string
+    enum:
+      - pending
+      - accepted
+      - accepted-with-comment
+      - rework-required
+      - panel-escalated
+      - panel-resolved
+      - awaiting-time-stamp
+      - withdrawn
+
+  # ---------------------------------------------------------------------------
+  # 2.11 Hard-block invariant kinds
+  # ---------------------------------------------------------------------------
+  HardBlockInvariantKind:
+    type: string
+    enum:
+      - pregnancy-denylist-order-select-hard-refuse
+      - pregnancy-firstline-restricted
+      - pce-legacy-never-feeds-cql
+      - prevent-canonical-binding
+      - age-gate-ge-18
+      - aki-triple-whammy-warning
+      - hyperkalemia-aceiarb-mra-warning
+      - beta-blocker-no-abrupt-discontinuation
+      - older-adult-orthostasis-monitoring
+      - aldosteronism-screen-resistant
+      - bp-confirmation-out-of-office
+    description: >
+      Closed kinds for declared hard-block invariants per Library. Each
+      Library carries the subset applicable to it. Validators MUST
+      verify that every declared kind has a verifying reference test.
+
+  # ---------------------------------------------------------------------------
+  # 2.12 Audit-event kinds
+  # ---------------------------------------------------------------------------
+  AuditEventKind:
+    type: string
+    enum:
+      - cohort-created
+      - reviewer-added
+      - reviewer-removed
+      - library-added
+      - signoff-recorded
+      - cohort-axis-signed
+      - escalation-opened
+      - escalation-resolved
+      - rework-opened
+      - rework-resolved
+      - panel-chair-signed
+      - cohort-finalized
+      - cohort-superseded
+      - cohort-withdrawn
+      - hard-block-relax-attempted   # adversarial input audit
+      - gate2-edit-attempt           # adversarial input audit
+
+# -----------------------------------------------------------------------------
+# 3. STRUCTURED TYPES
+# -----------------------------------------------------------------------------
+
+  # ---------------------------------------------------------------------------
+  # 3.1 IdentityProof — institutional verification of a reviewer
+  # ---------------------------------------------------------------------------
+  IdentityProof:
+    type: object
+    additionalProperties: false
+    required: [ial, aal, proofing_method, proofing_evidence_uri, proofed_at, proofed_by_org]
+    properties:
+      ial: { $ref: "#/$defs/IdentityAssuranceLevel" }
+      aal: { $ref: "#/$defs/AuthenticatorAssuranceLevel" }
+      proofing_method:        { type: string }
+      proofing_evidence_uri:
+        type: string
+        format: uri
+      proofed_at:             { type: string, format: date-time }
+      proofed_by_org:         { type: string }
+      proofed_by_person:      { type: [string, "null"] }
+
+  # ---------------------------------------------------------------------------
+  # 3.2 Credential
+  # ---------------------------------------------------------------------------
+  Credential:
+    type: object
+    additionalProperties: false
+    required: [kind, issuer, evidence_uri, valid_from]
+    properties:
+      kind:           { $ref: "#/$defs/CredentialKind" }
+      issuer:         { type: string }
+      evidence_uri:   { type: string, format: uri }
+      valid_from:     { type: string, format: date }
+      valid_until:    { type: [string, "null"], format: date }
+      verified_at:    { type: string, format: date-time }
+      verified_by:    { type: string }
+
+  # ---------------------------------------------------------------------------
+  # 3.3 ConflictOfInterest
+  # ---------------------------------------------------------------------------
+  ConflictOfInterest:
+    type: object
+    additionalProperties: false
+    required: [kind, disclosed_at, scope]
+    properties:
+      kind:                              { $ref: "#/$defs/COIKind" }
+      counterparty:                      { type: [string, "null"] }
+      scope:
+        type: string
+        enum:
+          - none
+          - drug-class
+          - device-class
+          - therapeutic-area
+          - guideline-document
+          - library-domain
+          - other
+      scope_detail:                      { type: [string, "null"] }
+      disclosed_at:                      { type: string, format: date-time }
+      mitigation:                        { type: [string, "null"] }
+      auto_disqualifies_library_names:
+        type: array
+        items: { $ref: "#/$defs/LibraryName" }
+      auto_disqualifies_library_domains:
+        type: array
+        items: { $ref: "#/$defs/LibraryDomain" }
+
+  # ---------------------------------------------------------------------------
+  # 3.4 Reviewer
+  # ---------------------------------------------------------------------------
+  Reviewer:
+    type: object
+    additionalProperties: false
+    required:
+      - reviewer_id
+      - legal_name
+      - role
+      - identity_proof
+      - credentials
+      - coi_disclosures
+      - public_key
+    properties:
+      reviewer_id:
+        type: string
+        pattern: "^rev-[0-9a-f]{16}$"
+        description: >
+          Stable, deterministic ID for this reviewer (truncated SHA-256
+          of institution + employee number + identity_proof.proofing_evidence_uri).
+          Reviewers may be the same individuals as in the cohort's
+          contributing Gate 1 register; the reviewer_id is shared by
+          design.
+      legal_name:                   { type: string, minLength: 1 }
+      preferred_credential_string:  { type: [string, "null"] }
+      role:                         { $ref: "#/$defs/ReviewerRole" }
+      institution:                  { type: string }
+      identity_proof:               { $ref: "#/$defs/IdentityProof" }
+      credentials:
+        type: array
+        minItems: 1
+        items: { $ref: "#/$defs/Credential" }
+      coi_disclosures:
+        type: array
+        minItems: 1
+        items: { $ref: "#/$defs/ConflictOfInterest" }
+      public_key:
+        type: object
+        additionalProperties: false
+        required: [algorithm, key_id, key_pem]
+        properties:
+          algorithm:           { $ref: "#/$defs/SignatureAlgorithm" }
+          key_id:              { type: string }
+          key_pem:             { type: string }
+          fingerprint_sha256:  { type: string, pattern: "^[0-9a-f]{64}$" }
+      added_to_panel_at:       { type: string, format: date-time }
+
+  # ---------------------------------------------------------------------------
+  # 3.5 TimeStamp
+  # ---------------------------------------------------------------------------
+  TimeStamp:
+    type: object
+    additionalProperties: false
+    required: [tsa_name, tsa_url, tsa_cert_fingerprint_sha256, time, token_b64]
+    properties:
+      tsa_name:                       { type: string }
+      tsa_url:                        { type: string, format: uri }
+      tsa_cert_fingerprint_sha256:    { type: string, pattern: "^[0-9a-f]{64}$" }
+      time:                           { type: string, format: date-time }
+      token_b64:                      { type: string }
+
+  # ---------------------------------------------------------------------------
+  # 3.6 Signature
+  # ---------------------------------------------------------------------------
+  Signature:
+    type: object
+    additionalProperties: false
+    required: [algorithm, key_id, payload_canonical_form, payload_sha256, signature_b64, time_stamp]
+    properties:
+      algorithm:               { $ref: "#/$defs/SignatureAlgorithm" }
+      key_id:                  { type: string }
+      payload_canonical_form:
+        type: string
+        enum: [json-canonical-rfc8785]
+      payload_sha256:          { type: string, pattern: "^[0-9a-f]{64}$" }
+      signature_b64:           { type: string }
+      time_stamp:              { $ref: "#/$defs/TimeStamp" }
+      verifies:                { type: boolean }
+
+  # ---------------------------------------------------------------------------
+  # 3.7 LibrarySnapshotPointer — what each Library entry points to on disk
+  # ---------------------------------------------------------------------------
+  LibrarySnapshotPointer:
+    type: object
+    additionalProperties: false
+    required:
+      - library_id
+      - library_name
+      - library_version
+      - snapshot_dir
+      - cql_files
+      - elm_files
+      - typecheck_report_path
+      - coverage_report_path
+      - reference_tests_path
+      - bound_recommendation_record_ids
+      - bound_atomic_unit_ids
+      - bound_value_set_ids
+      - bound_code_system_ids
+    properties:
+      library_id:
+        type: string
+        pattern: "^lib-[0-9a-f]{16}$"
+      library_name:        { $ref: "#/$defs/LibraryName" }
+      library_version:
+        type: string
+        pattern: "^[0-9]+\\.[0-9]+\\.[0-9]+$"
+      snapshot_dir:
+        type: string
+        description: Relative path to work/<run_id>/cql/<library_id>/ at sign time.
+      cql_files:
+        type: array
+        minItems: 1
+        items:
+          type: object
+          additionalProperties: false
+          required: [path, sha256]
+          properties:
+            path:    { type: string }
+            sha256:  { type: string, pattern: "^[0-9a-f]{64}$" }
+      elm_files:
+        type: array
+        items:
+          type: object
+          additionalProperties: false
+          required: [path, sha256]
+          properties:
+            path:    { type: string }
+            sha256:  { type: string, pattern: "^[0-9a-f]{64}$" }
+      typecheck_report_path: { type: string }
+      typecheck_report_sha256: { type: string, pattern: "^[0-9a-f]{64}$" }
+      coverage_report_path:    { type: string }
+      coverage_report_sha256:  { type: string, pattern: "^[0-9a-f]{64}$" }
+      reference_tests_path:    { type: string }
+      reference_tests_sha256:  { type: string, pattern: "^[0-9a-f]{64}$" }
+      bound_recommendation_record_ids:
+        type: array
+        minItems: 1
+        items: { type: string, pattern: "^rec-[0-9a-f]{16}$" }
+      bound_atomic_unit_ids:
+        type: array
+        minItems: 1
+        items: { type: string, pattern: "^au-[0-9a-f]{16}$" }
+      bound_value_set_ids:
+        type: array
+        items: { type: string }
+      bound_code_system_ids:
+        type: array
+        items: { type: string }
+      bound_risk_engine:
+        type: [object, "null"]
+        additionalProperties: false
+        required: [name, legacy_only]
+        properties:
+          name:        { type: string, enum: [PREVENT, PCE-legacy] }
+          legacy_only: { type: boolean }
+      cds_hooks_service_ids_wired:
+        type: array
+        items: { type: string }
+
+  # ---------------------------------------------------------------------------
+  # 3.8 TypecheckReportSummary — what the schema records (full report on disk)
+  # ---------------------------------------------------------------------------
+  TypecheckReportSummary:
+    type: object
+    additionalProperties: false
+    required: [runtime_pin, errors_count, warnings_count, warnings_promoted_to_errors_count, status]
+    properties:
+      runtime_pin:                          { type: string }
+      errors_count:                         { type: integer, minimum: 0 }
+      warnings_count:                       { type: integer, minimum: 0 }
+      warnings_promoted_to_errors_count:    { type: integer, minimum: 0 }
+      status:                               { type: string, enum: [clean, errors-present, warnings-promoted] }
+      report_sha256:                        { type: string, pattern: "^[0-9a-f]{64}$" }
+
+  # ---------------------------------------------------------------------------
+  # 3.9 CoverageReportSummary — what the schema records (full report on disk)
+  # ---------------------------------------------------------------------------
+  CoverageReportSummary:
+    type: object
+    additionalProperties: false
+    required:
+      - runtime_pin
+      - synthea_cohort_run_id
+      - synthea_seed
+      - branch_coverage_pct
+      - branches_total
+      - branches_covered
+      - report_sha256
+      - status
+    properties:
+      runtime_pin:           { type: string }
+      synthea_cohort_run_id: { type: string }
+      synthea_seed:          { type: string }
+      branch_coverage_pct:
+        type: number
+        minimum: 0.0
+        maximum: 100.0
+      branches_total:        { type: integer, minimum: 0 }
+      branches_covered:      { type: integer, minimum: 0 }
+      report_sha256:         { type: string, pattern: "^[0-9a-f]{64}$" }
+      status:
+        type: string
+        enum: [floor-met, below-floor]
+      eq_tolerance_applied:
+        type: boolean
+        default: false
+        description: True when the runtime is declared `nondeterministic` and aggregate-metric-equal under tolerance was used at sign time.
+
+  # ---------------------------------------------------------------------------
+  # 3.10 HardBlockInvariant — declared per Library with verification pointer
+  # ---------------------------------------------------------------------------
+  HardBlockInvariant:
+    type: object
+    additionalProperties: false
+    required: [kind, statement, verifying_test_id, verified, basis]
+    properties:
+      kind:               { $ref: "#/$defs/HardBlockInvariantKind" }
+      statement:
+        type: string
+        minLength: 1
+        description: One-line, source-anchored statement of the invariant.
+      verifying_test_id:
+        type: string
+        minLength: 1
+        description: ID of the reference test that asserts this invariant. Resolved against `reference_tests_path`.
+      verified:
+        type: boolean
+        description: True iff the verifying test passes at sign time. Validators recompute.
+      basis:
+        type: string
+        enum:
+          - cor-iii-harm-anchor
+          - cor-iii-no-benefit-anchor
+          - explicit-should-not-anchor
+          - explicit-not-recommended-anchor
+          - manifest-pin-prevent
+          - manifest-intended-use-age
+          - safety-hazard-mitigation
+        description: Why this invariant exists; pointer to source authority.
+
+  # ---------------------------------------------------------------------------
+  # 3.11 ReferenceTestResult
+  # ---------------------------------------------------------------------------
+  ReferenceTestResult:
+    type: object
+    additionalProperties: false
+    required: [test_id, status]
+    properties:
+      test_id:    { type: string, minLength: 1 }
+      status:     { type: string, enum: [pass, fail, skipped] }
+      asserts_invariant_kind:
+        type: [string, "null"]
+        # Validators MUST resolve to a HardBlockInvariantKind when non-null.
+      duration_ms: { type: [integer, "null"], minimum: 0 }
+      report_uri:  { type: [string, "null"], format: uri }
+
+  # ---------------------------------------------------------------------------
+  # 3.12 LibrarySignoff — per-Library reviewer signoff
+  # ---------------------------------------------------------------------------
+  LibrarySignoff:
+    type: object
+    additionalProperties: false
+    required:
+      - signoff_id
+      - reviewer_id
+      - role
+      - library_id
+      - library_content_hash
+      - manifest_payload_sha256_at_signoff
+      - decision
+      - signed_at
+      - signature
+    properties:
+      signoff_id:
+        type: string
+        pattern: "^so-[0-9a-f]{16}$"
+        description: Stable, deterministic ID (truncated SHA-256 of reviewer_id, library_id, signed_at).
+      reviewer_id:                       { type: string, pattern: "^rev-[0-9a-f]{16}$" }
+      role:                              { $ref: "#/$defs/ReviewerRole" }
+      library_id:                        { type: string, pattern: "^lib-[0-9a-f]{16}$" }
+      library_content_hash:
+        type: string
+        pattern: "^[0-9a-f]{64}$"
+        description: >
+          SHA-256 over the JCS-canonical Library snapshot at sign time
+          (the Library's CQL files, ELM files, typecheck and coverage
+          report SHAs, bound RecommendationRecord ids and content
+          hashes, bound AtomicUnit ids, bound value-set/code-system ids,
+          bound risk-engine binding, and CDS Hooks service ids wired).
+          This is the hash the signature covers.
+      manifest_payload_sha256_at_signoff:
+        type: string
+        pattern: "^[0-9a-f]{64}$"
+        description: SHA-256 of the active manifest's `fixity.manifest_sha256` at sign time. Pinned for audit.
+      gate1_register_refs:
+        type: array
+        minItems: 1
+        items:
+          type: object
+          additionalProperties: false
+          required: [register_path, register_sha256]
+          properties:
+            register_path:    { type: string }
+            register_sha256:  { type: string, pattern: "^[0-9a-f]{64}$" }
+        description: >
+          Every Gate 1 register from which this Library consumes
+          finalized records. The orchestrator verifies each register
+          finalized state at preflight; the schema records the SHA for
+          audit immutability.
+      decision:                          { $ref: "#/$defs/ReviewerDecision" }
+      rationale:
+        type: string
+        minLength: 1
+      comment:
+        type: [string, "null"]
+        description: Audit-only free-text comment for `accept-with-comment`. Does NOT modify the Library.
+      concern_category:
+        type: [string, "null"]
+        description: One of ConcernCategory; required when decision is `reject-rework` or when the reviewer surfaces a substantive concern.
+      coi_attestation_at_signoff:
+        type: object
+        additionalProperties: false
+        required: [no_undisclosed_coi, applicable_coi_kinds]
+        properties:
+          no_undisclosed_coi:    { type: boolean }
+          applicable_coi_kinds:
+            type: array
+            items: { $ref: "#/$defs/COIKind" }
+      session_attestations:
+        type: object
+        additionalProperties: false
+        required:
+          - reviewed_cql_source
+          - reviewed_typecheck_report
+          - reviewed_coverage_report
+          - reviewed_reference_tests
+          - reviewed_hard_block_invariants
+          - reviewed_cds_hooks_wiring_preview
+        properties:
+          reviewed_cql_source:                  { type: boolean }
+          reviewed_typecheck_report:            { type: boolean }
+          reviewed_coverage_report:             { type: boolean }
+          reviewed_reference_tests:             { type: boolean }
+          reviewed_hard_block_invariants:       { type: boolean }
+          reviewed_cds_hooks_wiring_preview:    { type: boolean }
+          reviewed_provenance_inputs:           { type: boolean, default: true }
+      signed_at:                         { type: string, format: date-time }
+      signature:                         { $ref: "#/$defs/Signature" }
+
+  # ---------------------------------------------------------------------------
+  # 3.13 LibraryEntry — disposition of one Library in the cohort
+  # ---------------------------------------------------------------------------
+  LibraryEntry:
+    type: object
+    additionalProperties: false
+    required:
+      - library_id
+      - library_name
+      - library_version
+      - library_content_hash
+      - snapshot
+      - typecheck_summary
+      - coverage_summary
+      - hard_block_invariants
+      - reference_test_results
+      - state
+      - signoffs
+    properties:
+      library_id:               { type: string, pattern: "^lib-[0-9a-f]{16}$" }
+      library_name:             { $ref: "#/$defs/LibraryName" }
+      library_version:
+        type: string
+        pattern: "^[0-9]+\\.[0-9]+\\.[0-9]+$"
+      library_content_hash:
+        type: string
+        pattern: "^[0-9a-f]{64}$"
+        description: The hash signed by every signoff in `signoffs[]`.
+      snapshot:                 { $ref: "#/$defs/LibrarySnapshotPointer" }
+      typecheck_summary:        { $ref: "#/$defs/TypecheckReportSummary" }
+      coverage_summary:         { $ref: "#/$defs/CoverageReportSummary" }
+      hard_block_invariants:
+        type: array
+        minItems: 0
+        items: { $ref: "#/$defs/HardBlockInvariant" }
+        description: >
+          Closed list of declared hard-block invariants for this Library.
+          Empty for Libraries with no hard-block invariants applicable
+          (e.g., HBPStaging, PreventRisk under default policy). For
+          PregnancyHTN, MUST include kind
+          `pregnancy-denylist-order-select-hard-refuse`.
+      reference_test_results:
+        type: array
+        minItems: 1
+        items: { $ref: "#/$defs/ReferenceTestResult" }
+      state:                    { $ref: "#/$defs/LibraryDispositionState" }
+      signoffs:
+        type: array
+        minItems: 0
+        maxItems: 4
+        items: { $ref: "#/$defs/LibrarySignoff" }
+      escalation:
+        type: [object, "null"]
+        additionalProperties: false
+        required: [opened_at, reason, escalated_to_role]
+        properties:
+          opened_at:              { type: string, format: date-time }
+          reason:                 { type: string, minLength: 1 }
+          escalated_to_role:      { $ref: "#/$defs/ReviewerRole" }
+          resolution:
+            type: [object, "null"]
+            additionalProperties: false
+            required: [resolved_at, decision, resolver_signoff]
+            properties:
+              resolved_at:        { type: string, format: date-time }
+              decision:           { $ref: "#/$defs/ReviewerDecision" }
+              resolver_signoff:   { $ref: "#/$defs/LibrarySignoff" }
+      rework_history:
+        type: array
+        items:
+          type: object
+          additionalProperties: false
+          required: [opened_at, reviewer_id, reason]
+          properties:
+            opened_at:    { type: string, format: date-time }
+            reviewer_id:  { type: string }
+            reason:       { type: string, minLength: 1 }
+            concern_category: { $ref: "#/$defs/ConcernCategory" }
+            resolved_at:  { type: [string, "null"], format: date-time }
+            resolved_via_new_library_id:
+              type: [string, "null"]
+              pattern: "^lib-[0-9a-f]{16}$"
+              description: >
+                When rework results in a new Library snapshot, the new
+                library_id is recorded here for predecessor chaining.
+                The new entry is added to libraries[] with its own
+                signoffs[].
+
+  # ---------------------------------------------------------------------------
+  # 3.14 CohortAxisSignoff — one per cohort, by the clinical informaticist
+  # ---------------------------------------------------------------------------
+  CohortAxisSignoff:
+    type: object
+    additionalProperties: false
+    required:
+      - reviewer_id
+      - role
+      - cohort_axis_payload_sha256
+      - attestations
+      - signed_at
+      - signature
+    properties:
+      reviewer_id:
+        type: string
+        pattern: "^rev-[0-9a-f]{16}$"
+      role:
+        type: string
+        enum: [clinical-informaticist]
+      cohort_axis_payload_sha256:
+        type: string
+        pattern: "^[0-9a-f]{64}$"
+        description: >
+          SHA-256 over the JCS-canonical cohort-axis attestation payload
+          (provenance ribbon, terminology pin set, IG version, CDS
+          Hooks wiring matrix). The signature covers this hash.
+      attestations:
+        type: object
+        additionalProperties: false
+        required:
+          - provenance_integrity_attested
+          - terminology_pin_consistency_attested
+          - ig_version_alignment_attested
+          - cds_hooks_wiring_readiness_attested
+        properties:
+          provenance_integrity_attested:           { type: boolean }
+          terminology_pin_consistency_attested:    { type: boolean }
+          ig_version_alignment_attested:           { type: boolean }
+          cds_hooks_wiring_readiness_attested:     { type: boolean }
+      coi_attestation_at_signoff:
+        type: object
+        additionalProperties: false
+        required: [no_undisclosed_coi]
+        properties:
+          no_undisclosed_coi: { type: boolean }
+      signed_at:               { type: string, format: date-time }
+      signature:               { $ref: "#/$defs/Signature" }
+
+  # ---------------------------------------------------------------------------
+  # 3.15 PanelChairSignoff — cohort-level signoff
+  # ---------------------------------------------------------------------------
+  PanelChairSignoff:
+    type: object
+    additionalProperties: false
+    required:
+      - chair_reviewer_id
+      - cohort_manifest_hash
+      - composition_compliance_attested
+      - coverage_floor_satisfied
+      - hard_block_invariants_verified
+      - escalations_disposed
+      - cohort_axis_present
+      - signed_at
+      - signature
+    properties:
+      chair_reviewer_id:
+        type: string
+        pattern: "^rev-[0-9a-f]{16}$"
+      cohort_manifest_hash:
+        type: string
+        pattern: "^[0-9a-f]{64}$"
+        description: >
+          SHA-256 over the JCS-canonical form of `libraries[]` ordered
+          by `library_id` ascending. The signature covers this hash.
+      composition_compliance_attested: { type: boolean }
+      coverage_floor_satisfied:        { type: boolean }
+      hard_block_invariants_verified:  { type: boolean }
+      escalations_disposed:            { type: boolean }
+      cohort_axis_present:             { type: boolean }
+      coi_attestation_at_signoff:
+        type: object
+        additionalProperties: false
+        required: [no_undisclosed_coi]
+        properties:
+          no_undisclosed_coi: { type: boolean }
+      signed_at:                       { type: string, format: date-time }
+      signature:                       { $ref: "#/$defs/Signature" }
+
+  # ---------------------------------------------------------------------------
+  # 3.16 RegisterAuditEvent
+  # ---------------------------------------------------------------------------
+  RegisterAuditEvent:
+    type: object
+    additionalProperties: false
+    required: [event_id, occurred_at, kind, actor_id, payload_sha256]
+    properties:
+      event_id:        { type: string, pattern: "^evt-[0-9a-f]{16}$" }
+      occurred_at:     { type: string, format: date-time }
+      kind:            { $ref: "#/$defs/AuditEventKind" }
+      actor_id:        { type: string }
+      payload_sha256:  { type: string, pattern: "^[0-9a-f]{64}$" }
+      prov_activity_id:{ type: [string, "null"] }
+
+# -----------------------------------------------------------------------------
+# 4. ROOT TYPE — Gate2Register
+# -----------------------------------------------------------------------------
+type: object
+additionalProperties: false
+required:
+  - schema_version
+  - register_version
+  - guideline_manifest_ref
+  - cohort
+  - panel
+  - libraries
+  - cohort_axis_signoff
+  - audit_log
+  - fixity
+properties:
+
+  schema_version:
+    type: string
+    const: "1.0.0"
+
+  register_version:
+    type: string
+    pattern: "^[0-9]+\\.[0-9]+\\.[0-9]+$"
+    description: Semver of this register instance. New register version after any post-finalization change.
+
+  predecessor_register_version:
+    type: [string, "null"]
+    pattern: "^[0-9]+\\.[0-9]+\\.[0-9]+$|^null$"
+
+  guideline_manifest_ref:
+    type: string
+    description: Pointer to the active `schemas/guideline-manifest-hbp-2025.yaml` instance.
+
+  # ---------------------------------------------------------------------------
+  # 4.1 Cohort identity
+  # ---------------------------------------------------------------------------
+  cohort:
+    type: object
+    additionalProperties: false
+    required: [cohort_id, name, run_id, opened_at, state, scope]
+    properties:
+      cohort_id:
+        type: string
+        pattern: "^cohort-[0-9a-f]{16}$"
+      name:                { type: string, minLength: 1 }
+      run_id:              { type: string, format: uuid }
+      opened_at:           { type: string, format: date-time }
+      finalized_at:        { type: [string, "null"], format: date-time }
+      superseded_at:       { type: [string, "null"], format: date-time }
+      state:               { $ref: "#/$defs/CohortState" }
+      scope:
+        type: object
+        additionalProperties: false
+        required: [domains, includes_pregnancy_library]
+        properties:
+          domains:
+            type: array
+            minItems: 1
+            items: { $ref: "#/$defs/LibraryDomain" }
+          includes_pregnancy_library:
+            type: boolean
+            description: >
+              True if any Library in this cohort is `PregnancyHTN`. When
+              true, the composition matrix REQUIRES MFM + clinical
+              pharmacology on that Library, and `htn-pregnancy-denylist`
+              MUST be wired as `order-select` with hard refusal.
+
+  # ---------------------------------------------------------------------------
+  # 4.2 Panel
+  # ---------------------------------------------------------------------------
+  panel:
+    type: object
+    additionalProperties: false
+    required: [panel_id, reviewers, panel_chair_signoff]
+    properties:
+      panel_id:    { type: string, pattern: "^panel-[0-9a-f]{16}$" }
+      reviewers:
+        type: array
+        minItems: 2
+        items: { $ref: "#/$defs/Reviewer" }
+      panel_chair_signoff:
+        oneOf:
+          - { $ref: "#/$defs/PanelChairSignoff" }
+          - type: "null"
+
+  # ---------------------------------------------------------------------------
+  # 4.3 Libraries
+  # ---------------------------------------------------------------------------
+  libraries:
+    type: array
+    minItems: 1
+    items: { $ref: "#/$defs/LibraryEntry" }
+
+  # ---------------------------------------------------------------------------
+  # 4.4 Cohort-axis informatics signoff
+  # ---------------------------------------------------------------------------
+  cohort_axis_signoff:
+    oneOf:
+      - { $ref: "#/$defs/CohortAxisSignoff" }
+      - type: "null"
+
+  # ---------------------------------------------------------------------------
+  # 4.5 Audit log (append-only)
+  # ---------------------------------------------------------------------------
+  audit_log:
+    type: array
+    items: { $ref: "#/$defs/RegisterAuditEvent" }
+
+  # ---------------------------------------------------------------------------
+  # 4.6 Fixity
+  # ---------------------------------------------------------------------------
+  fixity:
+    type: object
+    additionalProperties: false
+    required: [register_sha256, computed_at, canonical_form]
+    properties:
+      register_sha256: { type: string, pattern: "^[0-9a-f]{64}$" }
+      computed_at:     { type: string, format: date-time }
+      canonical_form:  { type: string, enum: [json-canonical-rfc8785] }
+
+# -----------------------------------------------------------------------------
+# 5. CROSS-FIELD INVARIANTS (validators MUST enforce)
+# -----------------------------------------------------------------------------
+
+invariants:
+
+  - id: G2R-INV-01
+    description: >
+      Every `signoffs[*].reviewer_id` MUST refer to a Reviewer in
+      `panel.reviewers[]`. Every `panel_chair_signoff.chair_reviewer_id`
+      MUST refer to a Reviewer with `role == "panel-chair"`. Every
+      `cohort_axis_signoff.reviewer_id` MUST refer to a Reviewer with
+      `role == "clinical-informaticist"`.
+
+  - id: G2R-INV-02
+    description: >
+      Every Reviewer MUST have at least one Credential whose `kind` is
+      consistent with `role` per the role-credential matrix maintained
+      in `docs/role-credential-matrix.md`. CI MUST verify the matrix
+      file exists and is consulted at validation time.
+
+  - id: G2R-INV-03
+    description: >
+      Every Reviewer.identity_proof.ial MUST be `IAL2` or `IAL3`.
+      Reviewers with role `panel-chair` or `medical-director` MUST be
+      IAL3/AAL3.
+
+  - id: G2R-INV-04
+    description: >
+      For every LibraryEntry in state ∈ {accepted, accepted-with-comment},
+      `signoffs[]` MUST contain exactly two LibrarySignoff entries with
+      `decision ∈ {accept, accept-with-comment}` and distinct
+      `(reviewer_id, role)` pairs that satisfy the composition matrix
+      for the Library's name (§1).
+
+  - id: G2R-INV-05
+    description: >
+      For LibraryEntry whose `library_name == "PregnancyHTN"` and state
+      ∈ {accepted, accepted-with-comment}, signoffs[] MUST include at
+      least one with `role == "mfm-or-obstetric-medicine"` AND at least
+      one with `role == "clinical-pharmacologist"`.
+
+  - id: G2R-INV-06
+    description: >
+      Every Signature.payload_sha256 MUST equal the SHA-256 of the
+      JCS-canonical form of the payload it claims to cover. Validators
+      regenerate and compare; mismatch is a release blocker.
+
+  - id: G2R-INV-07
+    description: >
+      Every Signature MUST verify under the corresponding Reviewer's
+      public_key. Validators perform the cryptographic verification;
+      the producer's `verifies: true` claim is ignored.
+
+  - id: G2R-INV-08
+    description: >
+      Every LibrarySignoff.library_content_hash MUST equal the
+      recomputed Library content hash (over the snapshot's CQL files,
+      ELM files, typecheck and coverage report SHAs, bound record / unit
+      / value-set / code-system / risk-engine identifiers, and CDS Hooks
+      wiring) at validation time. Mismatch indicates post-signoff
+      mutation and is a release blocker (post_signoff_immutability).
+
+  - id: G2R-INV-09
+    description: >
+      Every LibrarySignoff.manifest_payload_sha256_at_signoff MUST equal
+      the active manifest's `fixity.manifest_sha256` at signing time.
+      Manifest drift between signoff and validation is a release
+      blocker.
+
+  - id: G2R-INV-10
+    description: >
+      Every Signature.time_stamp.tsa_cert_fingerprint_sha256 MUST be a
+      member of the active manifest's `tsa_list[].tsa_cert_fingerprint_sha256`,
+      and the time-stamp `time` MUST fall within that TSA cert's
+      validity window.
+
+  - id: G2R-INV-11
+    description: >
+      No LibrarySignoff may carry an edit to Library content. The
+      schema-level discrimination is enforced by the absence of an
+      `accept-with-edit` decision. Validators MUST ALSO scan rationale
+      and comment for hard-block-relax patterns (heuristic; matches
+      auto-route to `reject-rework` or to `hard-block-relax-attempted`
+      audit events).
+
+  - id: G2R-INV-12
+    description: >
+      For every signoff with decision == "accept-with-comment",
+      `comment` MUST be non-empty. Comments are audit-only and DO NOT
+      modify the Library; the orchestrator MUST NOT consume comments as
+      input to upstream re-author.
+
+  - id: G2R-INV-13
+    description: >
+      For every Reviewer assigned to a Library where the reviewer's
+      `coi_disclosures[].auto_disqualifies_library_names` includes the
+      Library's name OR
+      `coi_disclosures[].auto_disqualifies_library_domains` includes the
+      Library's domain, the Library's signoffs MUST include a recused
+      entry for that reviewer, and a substitute reviewer of the same
+      role MUST sign. Auto-disqualification cannot be ignored.
+
+  - id: G2R-INV-14
+    description: >
+      For every LibraryEntry in state == "panel-escalated", an
+      `escalation` object MUST be present with non-null
+      `escalated_to_role` and a null `resolution` (until resolved).
+
+  - id: G2R-INV-15
+    description: >
+      For state == "finalized" on the cohort:
+        - `panel_chair_signoff` MUST be non-null AND its
+          `cohort_manifest_hash` MUST equal the recomputed SHA-256 over
+          the JCS-canonical form of `libraries[]` (ordered by
+          library_id ascending);
+        - `cohort_axis_signoff` MUST be non-null;
+        - `panel_chair_signoff.composition_compliance_attested` MUST
+          be true;
+        - `panel_chair_signoff.coverage_floor_satisfied` MUST be true;
+        - `panel_chair_signoff.hard_block_invariants_verified` MUST be
+          true;
+        - `panel_chair_signoff.escalations_disposed` MUST be true;
+        - `panel_chair_signoff.cohort_axis_present` MUST be true.
+
+  - id: G2R-INV-16
+    description: >
+      `audit_log[]` MUST be append-only and ordered by `occurred_at`.
+      The validator computes the chained hash of events and compares
+      against a separately-maintained chain; out-of-order or missing
+      events indicate tampering and are release blockers.
+
+  - id: G2R-INV-17
+    description: >
+      `predecessor_register_version` MUST be set whenever this register
+      supersedes a prior finalized one. The predecessor register's
+      `state` MUST be `superseded` and its `superseded_at` MUST be set
+      to a time no later than this register's `opened_at`.
+
+  - id: G2R-INV-18
+    description: >
+      `fixity.register_sha256` MUST equal the SHA-256 of the
+      JCS-canonical form of this register document with `fixity`
+      excluded. The hash MUST be deterministic across re-runs.
+
+  - id: G2R-INV-19
+    description: >
+      Every LibraryEntry.coverage_summary.branch_coverage_pct MUST be
+      ≥ 95.0 for state ∈ {accepted, accepted-with-comment}. Below floor
+      is a release blocker (coverage_floor).
+
+  - id: G2R-INV-20
+    description: >
+      Every LibraryEntry.coverage_summary.report_sha256 MUST equal the
+      SHA-256 of the on-disk coverage report at validation time, and
+      MUST match `snapshot.coverage_report_sha256`. Drift indicates
+      report mutation and is a release blocker.
+
+  - id: G2R-INV-21
+    description: >
+      Every LibraryEntry.typecheck_summary.status MUST be `clean` for
+      state ∈ {accepted, accepted-with-comment}. `errors-present` or
+      `warnings-promoted` is a release blocker (typecheck_clean).
+
+  - id: G2R-INV-22
+    description: >
+      For every LibraryEntry, every declared HardBlockInvariant.kind in
+      `hard_block_invariants[]` MUST have a corresponding
+      ReferenceTestResult with `asserts_invariant_kind == kind` and
+      `status == "pass"`. Unverified hard-blocks are a release blocker
+      (hard_block_verification).
+
+  - id: G2R-INV-23
+    description: >
+      For LibraryEntry.library_name == "PregnancyHTN":
+        - `hard_block_invariants[]` MUST include kind
+          `pregnancy-denylist-order-select-hard-refuse`;
+        - the verifying reference test MUST be `pass`;
+        - the bound CDS Hooks service `htn-pregnancy-denylist` MUST be
+          recorded in `snapshot.cds_hooks_service_ids_wired[]`.
+      Validators MUST refuse to advance the Library otherwise.
+
+  - id: G2R-INV-24
+    description: >
+      For any LibraryEntry whose `snapshot.bound_risk_engine` is
+      non-null, `bound_risk_engine.name` MUST equal "PREVENT" and
+      `bound_risk_engine.legacy_only` MUST be false. PCE-legacy MUST
+      NOT feed CQL (ADR-HTN-001 D5).
+
+  - id: G2R-INV-25
+    description: >
+      For every LibraryEntry:
+        `snapshot.bound_recommendation_record_ids[]` MUST be non-empty
+        AND every id MUST exist in the build's records.json (validators
+        load and check). The recorded records MUST all be in state
+        `gate-1-passed` per their parent Gate 1 register, which MUST be
+        `finalized`.
+
+  - id: G2R-INV-26
+    description: >
+      `signoffs[*].gate1_register_refs[]` MUST be non-empty for every
+      LibrarySignoff, AND every register_path MUST resolve to a Gate 1
+      register file whose `cohort.state == "finalized"` at sign time.
+
+  - id: G2R-INV-27
+    description: >
+      No two signoffs from the same `reviewer_id` may exist on the same
+      Library (no self-pairing).
+
+  - id: G2R-INV-28
+    description: >
+      No signoff may carry `decision == "panel-escalated"` while the
+      LibraryEntry's `state` is not `panel-escalated`. State and
+      decisions MUST be consistent.
+
+  - id: G2R-INV-29
+    description: >
+      Validators MUST scan signoff rationale and comment for hard-block-
+      relax proposals (the patterns listed in §1 no_relax_of_hard_block).
+      Any match MUST appear in `audit_log[]` as a
+      `hard-block-relax-attempted` event AND the signoff's decision
+      MUST have been auto-rewritten to `reject-rework`. Validators MUST
+      reject the signoff if the auto-rewrite did not occur.
+
+  - id: G2R-INV-30
+    description: >
+      `cohort.scope.includes_pregnancy_library == true` AND any
+      LibraryEntry whose `library_name == "PregnancyHTN"` exists in
+      `libraries[]` together imply that the cohort's panel.reviewers[]
+      MUST include at least one reviewer with role
+      `mfm-or-obstetric-medicine` AND at least one with role
+      `clinical-pharmacologist` (so the matrix can be satisfied for
+      that Library).
+
+# =============================================================================
+# 6. WORKED EXAMPLES (shape-correctness fixtures)
+# -----------------------------------------------------------------------------
+# Two examples are provided:
+#   6.1 An in-review cohort with one accepted Library and one panel-escalated.
+#   6.2 A finalized cohort with cohort-axis informatics signoff and panel-chair
+#       signoff complete.
+#
+# EVERY field whose value can ONLY come from a real reviewer, a real
+# institution, real credential evidence, or a real Library snapshot is marked
+# `HUMAN_FILL` with explicit instructions. The pipeline refuses to operate on
+# registers containing `HUMAN_FILL` tokens.
+# =============================================================================
+
+examples:
+
+  # ---------------------------------------------------------------------------
+  # 6.1 In-review cohort
+  # ---------------------------------------------------------------------------
+  - schema_version: "1.0.0"
+    register_version: "1.0.0"
+    predecessor_register_version: null
+    guideline_manifest_ref: "guideline-manifest-hbp-2025.v1.0.0+ACC-AHA-2025+US+HUMAN_FILL_DATE.yaml"
+
+    cohort:
+      cohort_id: "cohort-HUMAN_FILL_16HEX"
+      name: "HUMAN_FILL: e.g., 'HBP-2025 CQL Library Cohort A'"
+      run_id: "HUMAN_FILL_UUID"
+      opened_at: "HUMAN_FILL_ISO_DATETIME"
+      finalized_at: null
+      superseded_at: null
+      state: in-review
+      scope:
+        domains: [classification, risk-stratification, pharmacologic-general]
+        includes_pregnancy_library: false
+
+    panel:
+      panel_id: "panel-HUMAN_FILL_16HEX"
+      reviewers:
+        - reviewer_id: "rev-HUMAN_FILL_16HEX"
+          legal_name: "HUMAN_FILL"
+          preferred_credential_string: "HUMAN_FILL"
+          role: hypertension-specialist
+          institution: "HUMAN_FILL"
+          identity_proof:
+            ial: IAL2
+            aal: AAL2
+            proofing_method: "HUMAN_FILL"
+            proofing_evidence_uri: "https://HUMAN_FILL/proof"
+            proofed_at: "HUMAN_FILL_ISO_DATETIME"
+            proofed_by_org: "HUMAN_FILL"
+            proofed_by_person: null
+          credentials:
+            - kind: abim-certification
+              issuer: "American Board of Internal Medicine"
+              evidence_uri: "https://HUMAN_FILL/abim"
+              valid_from: "HUMAN_FILL_ISO_DATE"
+              valid_until: "HUMAN_FILL_ISO_DATE"
+              verified_at: "HUMAN_FILL_ISO_DATETIME"
+              verified_by: "HUMAN_FILL"
+            - kind: ash-hypertension-specialist
+              issuer: "American Society of Hypertension"
+              evidence_uri: "https://HUMAN_FILL/ash"
+              valid_from: "HUMAN_FILL_ISO_DATE"
+              valid_until: null
+              verified_at: "HUMAN_FILL_ISO_DATETIME"
+              verified_by: "HUMAN_FILL"
+          coi_disclosures:
+            - kind: none
+              counterparty: null
+              scope: none
+              scope_detail: null
+              disclosed_at: "HUMAN_FILL_ISO_DATETIME"
+              mitigation: null
+              auto_disqualifies_library_names: []
+              auto_disqualifies_library_domains: []
+          public_key:
+            algorithm: Ed25519
+            key_id: "HUMAN_FILL"
+            key_pem: "HUMAN_FILL"
+            fingerprint_sha256: "HUMAN_FILL_64HEX"
+          added_to_panel_at: "HUMAN_FILL_ISO_DATETIME"
+
+        - reviewer_id: "rev-HUMAN_FILL_16HEX"
+          legal_name: "HUMAN_FILL"
+          preferred_credential_string: "HUMAN_FILL"
+          role: clinical-informaticist
+          institution: "HUMAN_FILL"
+          identity_proof:
+            ial: IAL2
+            aal: AAL2
+            proofing_method: "HUMAN_FILL"
+            proofing_evidence_uri: "https://HUMAN_FILL/proof"
+            proofed_at: "HUMAN_FILL_ISO_DATETIME"
+            proofed_by_org: "HUMAN_FILL"
+            proofed_by_person: null
+          credentials:
+            - kind: amia-ciip
+              issuer: "American Medical Informatics Association"
+              evidence_uri: "https://HUMAN_FILL/amia"
+              valid_from: "HUMAN_FILL_ISO_DATE"
+              valid_until: null
+              verified_at: "HUMAN_FILL_ISO_DATETIME"
+              verified_by: "HUMAN_FILL"
+          coi_disclosures:
+            - kind: none
+              counterparty: null
+              scope: none
+              scope_detail: null
+              disclosed_at: "HUMAN_FILL_ISO_DATETIME"
+              mitigation: null
+              auto_disqualifies_library_names: []
+              auto_disqualifies_library_domains: []
+          public_key:
+            algorithm: Ed25519
+            key_id: "HUMAN_FILL"
+            key_pem: "HUMAN_FILL"
+            fingerprint_sha256: "HUMAN_FILL_64HEX"
+          added_to_panel_at: "HUMAN_FILL_ISO_DATETIME"
+
+      panel_chair_signoff: null
+
+    libraries:
+      - library_id: "lib-HUMAN_FILL_16HEX"
+        library_name: HBPStaging
+        library_version: "1.0.0"
+        library_content_hash: "HUMAN_FILL_64HEX"
+        snapshot:
+          library_id: "lib-HUMAN_FILL_16HEX"
+          library_name: HBPStaging
+          library_version: "1.0.0"
+          snapshot_dir: "work/HUMAN_FILL_RUN_ID/cql/lib-HUMAN_FILL_16HEX/"
+          cql_files:
+            - { path: "HBPStaging.cql", sha256: "HUMAN_FILL_64HEX" }
+          elm_files:
+            - { path: "HBPStaging.json", sha256: "HUMAN_FILL_64HEX" }
+          typecheck_report_path: "typecheck.json"
+          typecheck_report_sha256: "HUMAN_FILL_64HEX"
+          coverage_report_path: "coverage.json"
+          coverage_report_sha256: "HUMAN_FILL_64HEX"
+          reference_tests_path: "reference-tests.json"
+          reference_tests_sha256: "HUMAN_FILL_64HEX"
+          bound_recommendation_record_ids: ["rec-HUMAN_FILL_16HEX"]
+          bound_atomic_unit_ids: ["au-HUMAN_FILL_16HEX"]
+          bound_value_set_ids: ["HUMAN_FILL_VS"]
+          bound_code_system_ids: ["HUMAN_FILL_CS"]
+          bound_risk_engine: null
+          cds_hooks_service_ids_wired: ["htn-bp-stage-and-confirm"]
+        typecheck_summary:
+          runtime_pin: "HUMAN_FILL_PIN"
+          errors_count: 0
+          warnings_count: 0
+          warnings_promoted_to_errors_count: 0
+          status: clean
+          report_sha256: "HUMAN_FILL_64HEX"
+        coverage_summary:
+          runtime_pin: "HUMAN_FILL_PIN"
+          synthea_cohort_run_id: "HUMAN_FILL_UUID"
+          synthea_seed: "HUMAN_FILL_SEED"
+          branch_coverage_pct: 96.5   # HUMAN_FILL: actual recomputed value
+          branches_total: 0           # HUMAN_FILL
+          branches_covered: 0         # HUMAN_FILL
+          report_sha256: "HUMAN_FILL_64HEX"
+          status: floor-met
+        hard_block_invariants:
+          - kind: bp-confirmation-out-of-office
+            statement: "HUMAN_FILL: source-anchored statement"
+            verifying_test_id: "HUMAN_FILL_TEST_ID"
+            verified: true
+            basis: explicit-should-not-anchor
+        reference_test_results:
+          - { test_id: "HUMAN_FILL_TEST_ID", status: pass, asserts_invariant_kind: bp-confirmation-out-of-office, duration_ms: 12, report_uri: null }
+        state: accepted
+        signoffs:
+          - signoff_id: "so-HUMAN_FILL_16HEX"
+            reviewer_id: "rev-HUMAN_FILL_16HEX"
+            role: hypertension-specialist
+            library_id: "lib-HUMAN_FILL_16HEX"
+            library_content_hash: "HUMAN_FILL_64HEX"
+            manifest_payload_sha256_at_signoff: "HUMAN_FILL_64HEX"
+            gate1_register_refs:
+              - { register_path: "work/HUMAN_FILL_RUN_ID/gate1/cohort-HUMAN_FILL_16HEX.signed.jsonld", register_sha256: "HUMAN_FILL_64HEX" }
+            decision: accept
+            rationale: "HUMAN_FILL"
+            comment: null
+            concern_category: null
+            coi_attestation_at_signoff:
+              no_undisclosed_coi: true
+              applicable_coi_kinds: []
+            session_attestations:
+              reviewed_cql_source: true
+              reviewed_typecheck_report: true
+              reviewed_coverage_report: true
+              reviewed_reference_tests: true
+              reviewed_hard_block_invariants: true
+              reviewed_cds_hooks_wiring_preview: true
+              reviewed_provenance_inputs: true
+            signed_at: "HUMAN_FILL_ISO_DATETIME"
+            signature:
+              algorithm: Ed25519
+              key_id: "HUMAN_FILL"
+              payload_canonical_form: json-canonical-rfc8785
+              payload_sha256: "HUMAN_FILL_64HEX"
+              signature_b64: "HUMAN_FILL_BASE64"
+              time_stamp:
+                tsa_name: "HUMAN_FILL"
+                tsa_url: "https://HUMAN_FILL/tsa"
+                tsa_cert_fingerprint_sha256: "HUMAN_FILL_64HEX"
+                time: "HUMAN_FILL_ISO_DATETIME"
+                token_b64: "HUMAN_FILL_BASE64"
+              verifies: true
+
+          - signoff_id: "so-HUMAN_FILL_16HEX"
+            reviewer_id: "rev-HUMAN_FILL_16HEX"
+            role: clinical-informaticist
+            library_id: "lib-HUMAN_FILL_16HEX"
+            library_content_hash: "HUMAN_FILL_64HEX"
+            manifest_payload_sha256_at_signoff: "HUMAN_FILL_64HEX"
+            gate1_register_refs:
+              - { register_path: "work/HUMAN_FILL_RUN_ID/gate1/cohort-HUMAN_FILL_16HEX.signed.jsonld", register_sha256: "HUMAN_FILL_64HEX" }
+            decision: accept
+            rationale: "HUMAN_FILL"
+            comment: null
+            concern_category: null
+            coi_attestation_at_signoff:
+              no_undisclosed_coi: true
+              applicable_coi_kinds: []
+            session_attestations:
+              reviewed_cql_source: true
+              reviewed_typecheck_report: true
+              reviewed_coverage_report: true
+              reviewed_reference_tests: true
+              reviewed_hard_block_invariants: true
+              reviewed_cds_hooks_wiring_preview: true
+              reviewed_provenance_inputs: true
+            signed_at: "HUMAN_FILL_ISO_DATETIME"
+            signature:
+              algorithm: Ed25519
+              key_id: "HUMAN_FILL"
+              payload_canonical_form: json-canonical-rfc8785
+              payload_sha256: "HUMAN_FILL_64HEX"
+              signature_b64: "HUMAN_FILL_BASE64"
+              time_stamp:
+                tsa_name: "HUMAN_FILL"
+                tsa_url: "https://HUMAN_FILL/tsa"
+                tsa_cert_fingerprint_sha256: "HUMAN_FILL_64HEX"
+                time: "HUMAN_FILL_ISO_DATETIME"
+                token_b64: "HUMAN_FILL_BASE64"
+              verifies: true
+        escalation: null
+        rework_history: []
+
+      - library_id: "lib-HUMAN_FILL_16HEX"
+        library_name: PreventRisk
+        library_version: "1.0.0"
+        library_content_hash: "HUMAN_FILL_64HEX"
+        snapshot:
+          library_id: "lib-HUMAN_FILL_16HEX"
+          library_name: PreventRisk
+          library_version: "1.0.0"
+          snapshot_dir: "work/HUMAN_FILL_RUN_ID/cql/lib-HUMAN_FILL_16HEX/"
+          cql_files:
+            - { path: "PreventRisk.cql", sha256: "HUMAN_FILL_64HEX" }
+          elm_files:
+            - { path: "PreventRisk.json", sha256: "HUMAN_FILL_64HEX" }
+          typecheck_report_path: "typecheck.json"
+          typecheck_report_sha256: "HUMAN_FILL_64HEX"
+          coverage_report_path: "coverage.json"
+          coverage_report_sha256: "HUMAN_FILL_64HEX"
+          reference_tests_path: "reference-tests.json"
+          reference_tests_sha256: "HUMAN_FILL_64HEX"
+          bound_recommendation_record_ids: ["rec-HUMAN_FILL_16HEX"]
+          bound_atomic_unit_ids: ["au-HUMAN_FILL_16HEX"]
+          bound_value_set_ids: []
+          bound_code_system_ids: []
+          bound_risk_engine: { name: PREVENT, legacy_only: false }
+          cds_hooks_service_ids_wired: ["htn-prevent-risk-and-threshold"]
+        typecheck_summary:
+          runtime_pin: "HUMAN_FILL_PIN"
+          errors_count: 0
+          warnings_count: 0
+          warnings_promoted_to_errors_count: 0
+          status: clean
+          report_sha256: "HUMAN_FILL_64HEX"
+        coverage_summary:
+          runtime_pin: "HUMAN_FILL_PIN"
+          synthea_cohort_run_id: "HUMAN_FILL_UUID"
+          synthea_seed: "HUMAN_FILL_SEED"
+          branch_coverage_pct: 95.2   # HUMAN_FILL
+          branches_total: 0           # HUMAN_FILL
+          branches_covered: 0         # HUMAN_FILL
+          report_sha256: "HUMAN_FILL_64HEX"
+          status: floor-met
+        hard_block_invariants:
+          - kind: prevent-canonical-binding
+            statement: "PREVENT is the canonical risk function; PCE-legacy never feeds CQL."
+            verifying_test_id: "HUMAN_FILL_TEST_ID"
+            verified: true
+            basis: manifest-pin-prevent
+          - kind: pce-legacy-never-feeds-cql
+            statement: "Library MUST NOT consume PCE-legacy bindings."
+            verifying_test_id: "HUMAN_FILL_TEST_ID"
+            verified: true
+            basis: manifest-pin-prevent
+        reference_test_results:
+          - { test_id: "HUMAN_FILL_TEST_ID", status: pass, asserts_invariant_kind: prevent-canonical-binding, duration_ms: 9, report_uri: null }
+          - { test_id: "HUMAN_FILL_TEST_ID", status: pass, asserts_invariant_kind: pce-legacy-never-feeds-cql, duration_ms: 5, report_uri: null }
+        state: panel-escalated
+        signoffs:
+          - signoff_id: "so-HUMAN_FILL_16HEX"
+            reviewer_id: "rev-HUMAN_FILL_16HEX"
+            role: hypertension-specialist
+            library_id: "lib-HUMAN_FILL_16HEX"
+            library_content_hash: "HUMAN_FILL_64HEX"
+            manifest_payload_sha256_at_signoff: "HUMAN_FILL_64HEX"
+            gate1_register_refs:
+              - { register_path: "work/HUMAN_FILL_RUN_ID/gate1/cohort-HUMAN_FILL_16HEX.signed.jsonld", register_sha256: "HUMAN_FILL_64HEX" }
+            decision: escalate-panel
+            rationale: |
+              HUMAN_FILL: e.g., "PREVENT-vs-PCE binding boundary unclear at
+              age extremes; reviewer requests panel-chair adjudication."
+            comment: null
+            concern_category: boundary-too-restrictive
+            coi_attestation_at_signoff:
+              no_undisclosed_coi: true
+              applicable_coi_kinds: []
+            session_attestations:
+              reviewed_cql_source: true
+              reviewed_typecheck_report: true
+              reviewed_coverage_report: true
+              reviewed_reference_tests: true
+              reviewed_hard_block_invariants: true
+              reviewed_cds_hooks_wiring_preview: true
+              reviewed_provenance_inputs: true
+            signed_at: "HUMAN_FILL_ISO_DATETIME"
+            signature:
+              algorithm: Ed25519
+              key_id: "HUMAN_FILL"
+              payload_canonical_form: json-canonical-rfc8785
+              payload_sha256: "HUMAN_FILL_64HEX"
+              signature_b64: "HUMAN_FILL_BASE64"
+              time_stamp:
+                tsa_name: "HUMAN_FILL"
+                tsa_url: "https://HUMAN_FILL/tsa"
+                tsa_cert_fingerprint_sha256: "HUMAN_FILL_64HEX"
+                time: "HUMAN_FILL_ISO_DATETIME"
+                token_b64: "HUMAN_FILL_BASE64"
+              verifies: true
+        escalation:
+          opened_at: "HUMAN_FILL_ISO_DATETIME"
+          reason: "HUMAN_FILL"
+          escalated_to_role: panel-chair
+          resolution: null
+        rework_history: []
+
+    cohort_axis_signoff: null
+
+    audit_log:
+      - { event_id: "evt-HUMAN_FILL_16HEX", occurred_at: "HUMAN_FILL_ISO_DATETIME", kind: cohort-created,    actor_id: "HUMAN_FILL", payload_sha256: "HUMAN_FILL_64HEX", prov_activity_id: "HUMAN_FILL" }
+      - { event_id: "evt-HUMAN_FILL_16HEX", occurred_at: "HUMAN_FILL_ISO_DATETIME", kind: signoff-recorded,   actor_id: "rev-HUMAN_FILL_16HEX", payload_sha256: "HUMAN_FILL_64HEX", prov_activity_id: "HUMAN_FILL" }
+      - { event_id: "evt-HUMAN_FILL_16HEX", occurred_at: "HUMAN_FILL_ISO_DATETIME", kind: signoff-recorded,   actor_id: "rev-HUMAN_FILL_16HEX", payload_sha256: "HUMAN_FILL_64HEX", prov_activity_id: "HUMAN_FILL" }
+      - { event_id: "evt-HUMAN_FILL_16HEX", occurred_at: "HUMAN_FILL_ISO_DATETIME", kind: escalation-opened,  actor_id: "rev-HUMAN_FILL_16HEX", payload_sha256: "HUMAN_FILL_64HEX", prov_activity_id: "HUMAN_FILL" }
+
+    fixity:
+      register_sha256: "HUMAN_FILL_64HEX"
+      computed_at: "HUMAN_FILL_ISO_DATETIME"
+      canonical_form: json-canonical-rfc8785
+
+  # ---------------------------------------------------------------------------
+  # 6.2 Finalized cohort
+  # ---------------------------------------------------------------------------
+  - schema_version: "1.0.0"
+    register_version: "1.0.0"
+    predecessor_register_version: null
+    guideline_manifest_ref: "guideline-manifest-hbp-2025.v1.0.0+ACC-AHA-2025+US+HUMAN_FILL_DATE.yaml"
+
+    cohort:
+      cohort_id: "cohort-HUMAN_FILL_16HEX"
+      name: "HUMAN_FILL"
+      run_id: "HUMAN_FILL_UUID"
+      opened_at: "HUMAN_FILL_ISO_DATETIME"
+      finalized_at: "HUMAN_FILL_ISO_DATETIME"
+      superseded_at: null
+      state: finalized
+      scope:
+        domains: [classification, risk-stratification, pharmacologic-general]
+        includes_pregnancy_library: false
+
+    panel:
+      panel_id: "panel-HUMAN_FILL_16HEX"
+      reviewers:
+        # Same shape as 6.1 plus the panel chair.
+        - { reviewer_id: "rev-HUMAN_FILL_16HEX", legal_name: "HUMAN_FILL", preferred_credential_string: "HUMAN_FILL", role: hypertension-specialist, institution: "HUMAN_FILL", identity_proof: { ial: IAL2, aal: AAL2, proofing_method: "HUMAN_FILL", proofing_evidence_uri: "https://HUMAN_FILL/proof", proofed_at: "HUMAN_FILL_ISO_DATETIME", proofed_by_org: "HUMAN_FILL", proofed_by_person: null }, credentials: [ { kind: abim-certification, issuer: "American Board of Internal Medicine", evidence_uri: "https://HUMAN_FILL", valid_from: "HUMAN_FILL_ISO_DATE", valid_until: "HUMAN_FILL_ISO_DATE", verified_at: "HUMAN_FILL_ISO_DATETIME", verified_by: "HUMAN_FILL" } ], coi_disclosures: [ { kind: none, counterparty: null, scope: none, scope_detail: null, disclosed_at: "HUMAN_FILL_ISO_DATETIME", mitigation: null, auto_disqualifies_library_names: [], auto_disqualifies_library_domains: [] } ], public_key: { algorithm: Ed25519, key_id: "HUMAN_FILL", key_pem: "HUMAN_FILL", fingerprint_sha256: "HUMAN_FILL_64HEX" }, added_to_panel_at: "HUMAN_FILL_ISO_DATETIME" }
+        - { reviewer_id: "rev-HUMAN_FILL_16HEX", legal_name: "HUMAN_FILL", preferred_credential_string: "HUMAN_FILL", role: clinical-informaticist, institution: "HUMAN_FILL", identity_proof: { ial: IAL2, aal: AAL2, proofing_method: "HUMAN_FILL", proofing_evidence_uri: "https://HUMAN_FILL/proof", proofed_at: "HUMAN_FILL_ISO_DATETIME", proofed_by_org: "HUMAN_FILL", proofed_by_person: null }, credentials: [ { kind: amia-ciip, issuer: "American Medical Informatics Association", evidence_uri: "https://HUMAN_FILL", valid_from: "HUMAN_FILL_ISO_DATE", valid_until: null, verified_at: "HUMAN_FILL_ISO_DATETIME", verified_by: "HUMAN_FILL" } ], coi_disclosures: [ { kind: none, counterparty: null, scope: none, scope_detail: null, disclosed_at: "HUMAN_FILL_ISO_DATETIME", mitigation: null, auto_disqualifies_library_names: [], auto_disqualifies_library_domains: [] } ], public_key: { algorithm: Ed25519, key_id: "HUMAN_FILL", key_pem: "HUMAN_FILL", fingerprint_sha256: "HUMAN_FILL_64HEX" }, added_to_panel_at: "HUMAN_FILL_ISO_DATETIME" }
+        - reviewer_id: "rev-HUMAN_FILL_16HEX"
+          legal_name: "HUMAN_FILL"
+          preferred_credential_string: "HUMAN_FILL"
+          role: panel-chair
+          institution: "HUMAN_FILL"
+          identity_proof:
+            ial: IAL3
+            aal: AAL3
+            proofing_method: "HUMAN_FILL"
+            proofing_evidence_uri: "https://HUMAN_FILL/chair-proof"
+            proofed_at: "HUMAN_FILL_ISO_DATETIME"
+            proofed_by_org: "HUMAN_FILL"
+            proofed_by_person: null
+          credentials:
+            - kind: institutional-credential
+              issuer: "HUMAN_FILL"
+              evidence_uri: "https://HUMAN_FILL/chair"
+              valid_from: "HUMAN_FILL_ISO_DATE"
+              valid_until: null
+              verified_at: "HUMAN_FILL_ISO_DATETIME"
+              verified_by: "HUMAN_FILL"
+          coi_disclosures:
+            - kind: none
+              counterparty: null
+              scope: none
+              scope_detail: null
+              disclosed_at: "HUMAN_FILL_ISO_DATETIME"
+              mitigation: null
+              auto_disqualifies_library_names: []
+              auto_disqualifies_library_domains: []
+          public_key:
+            algorithm: Ed25519
+            key_id: "HUMAN_FILL"
+            key_pem: "HUMAN_FILL"
+            fingerprint_sha256: "HUMAN_FILL_64HEX"
+          added_to_panel_at: "HUMAN_FILL_ISO_DATETIME"
+      panel_chair_signoff:
+        chair_reviewer_id: "rev-HUMAN_FILL_16HEX"
+        cohort_manifest_hash: "HUMAN_FILL_64HEX"
+        composition_compliance_attested: true
+        coverage_floor_satisfied: true
+        hard_block_invariants_verified: true
+        escalations_disposed: true
+        cohort_axis_present: true
+        coi_attestation_at_signoff:
+          no_undisclosed_coi: true
+        signed_at: "HUMAN_FILL_ISO_DATETIME"
+        signature:
+          algorithm: Ed25519
+          key_id: "HUMAN_FILL"
+          payload_canonical_form: json-canonical-rfc8785
+          payload_sha256: "HUMAN_FILL_64HEX"
+          signature_b64: "HUMAN_FILL_BASE64"
+          time_stamp:
+            tsa_name: "HUMAN_FILL"
+            tsa_url: "https://HUMAN_FILL/tsa"
+            tsa_cert_fingerprint_sha256: "HUMAN_FILL_64HEX"
+            time: "HUMAN_FILL_ISO_DATETIME"
+            token_b64: "HUMAN_FILL_BASE64"
+          verifies: true
+
+    libraries:
+      # Two accepted Libraries, identical shape to the accepted Library in 6.1.
+      - { library_id: "lib-HUMAN_FILL_16HEX", library_name: HBPStaging, library_version: "1.0.0", library_content_hash: "HUMAN_FILL_64HEX", snapshot: { library_id: "lib-HUMAN_FILL_16HEX", library_name: HBPStaging, library_version: "1.0.0", snapshot_dir: "work/HUMAN_FILL_RUN_ID/cql/lib-HUMAN_FILL_16HEX/", cql_files: [ { path: "HBPStaging.cql", sha256: "HUMAN_FILL_64HEX" } ], elm_files: [ { path: "HBPStaging.json", sha256: "HUMAN_FILL_64HEX"

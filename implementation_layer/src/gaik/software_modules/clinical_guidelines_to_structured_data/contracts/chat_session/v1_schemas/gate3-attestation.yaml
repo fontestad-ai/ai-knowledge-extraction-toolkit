@@ -1,0 +1,1319 @@
+# =============================================================================
+# gate3-attestation.yaml
+# -----------------------------------------------------------------------------
+# Standalone schema for the Gate 3 pre-publish safety-case attestation —
+# the auditable, signed, append-only build-level document produced by
+# `safety-case-attest` that authorizes (or declines) publication of a
+# build derived from the cpg-htn-2025-acc-aha framework.
+#
+# This file is the contract for:
+#   - Build identity (the run id, the build version label, the active
+#     manifest reference).
+#   - The canonical Gate-3 BundleManifest: an exhaustive, closed list of
+#     bundle members, each pinned by a content hash computed under
+#     explicit canonicalization rules.
+#   - The attesters: a primary medical-director attester and an optional
+#     second attester for institutional dual-control policy.
+#   - Per-attester credential evidence (identity proofing at IAL3/AAL3
+#     for the medical director; IAL2/AAL2+ for the second attester per
+#     institutional policy).
+#   - Per-attester decision: attest / decline / escalate-to-board, with
+#     a closed `decline_reason` enum and a required acknowledgement
+#     toggle set for `attest`.
+#   - Cryptographic signature envelope (Ed25519 or ECDSA-P256-SHA256
+#     over RFC 8785 JCS canonical payload, RFC 3161 time-stamp).
+#   - The predecessor-attestation chain: a declined attestation links
+#     to its successor (a fresh attestation against a re-built bundle);
+#     a superseded attestation links to its successor as well.
+#   - Decline-without-publish semantics: a `declined` state is terminal
+#     for that bundle; re-attestation requires a new bundle with a new
+#     `bundle_sha256` and a new attestation document with explicit
+#     predecessor.
+#   - Post-attestation immutability rules.
+#
+# Posture: caution over velocity, fidelity over coverage, decline over
+# override. No batch attestation. No relaxation of any prior gate. An
+# attestation may decline to publish; it cannot override a prior gate's
+# reject. Post-attestation bundle content is immutable; the bundle hash
+# binds the attester to a specific moment in build history.
+#
+# This file does NOT contain clinical content. It records WHO attested
+# WHICH build at WHAT bundle hash and WHEN, plus the explicit
+# acknowledgements that publication is being authorized under specific
+# safety, copyright, PHI, and intended-use representations.
+#
+# Authority:
+#   - ADR-HTN-001 D5 (PREVENT canonical risk function)
+#   - ADR-HTN-001 D8 (pregnancy hard-block enforced at order-select)
+#   - ADR-HTN-001 D9 (three non-overridable human gates; Gate 3
+#     enforces medical-director attestation prior to publication)
+#   - ADR-HTN-001 D10 (PHI fail-closed; copyright envelope respected;
+#     these are upstream/sibling concerns and Gate 3 verifies the
+#     reports are clean before attestation)
+#   - ADR-HTN-001 D11 (Synthea-only test data; coverage reports verified
+#     at Gate 2 and re-confirmed at Gate 3 via bundle hash)
+#   - ADR-HTN-001 D13 (versioning triple)
+#   - ADR-HTN-001 D14 (supersession of 2017; mandatory Communication
+#     resource on first publish, verified at Gate 3)
+#   - ADR-HTN-001 D15 (drift detection; bundle hash is recomputed at
+#     session start, before signing, and after signing)
+#   - Framework spec §11 (Guideline Card / NAM CGAT / Safety Case /
+#     Regulatory Traceability Matrix / Retraction Notice)
+#   - `safety-case-attest` SKILL.md (the only authorized writer)
+#   - Parent framework rules: `god-session`, `human-authorization`,
+#     `native-ux-tools`
+#
+# Relationship to neighboring schemas (separate files, referenced by
+# $ref or by content-hash pointer):
+#   - schemas/gate1-register.yaml             (Gate 1 cohort registers
+#                                              referenced from the
+#                                              BundleManifest as `g1`
+#                                              members; each finalized)
+#   - schemas/gate2-register.yaml             (Gate 2 cohort registers
+#                                              referenced from the
+#                                              BundleManifest as `g2`
+#                                              members; each finalized)
+#   - schemas/recommendation-record-htn.yaml  (referenced as `recs`)
+#   - schemas/atomic-unit.yaml                (referenced as `aus`)
+#   - schemas/sair.yaml                       (referenced as `sair`)
+#   - schemas/acc-aha-grading.yaml            (transitively, via
+#                                              record/atomic-unit
+#                                              inheritance)
+#   - schemas/guideline-manifest-hbp-2025.yaml (referenced as `mfst`;
+#                                              tsa_list, signature_policy,
+#                                              quote_envelope,
+#                                              intended_use,
+#                                              supersession,
+#                                              errata_watch are
+#                                              consulted at preflight
+#                                              and at sign time)
+# =============================================================================
+
+$schema: "https://json-schema.org/draft/2020-12/schema"
+$id: "https://aiwg.io/cpg-htn-2025-acc-aha/schemas/gate3-attestation.yaml"
+title: "Gate3Attestation"
+description: >
+  Auditable, signed, build-level pre-publish safety-case attestation
+  document. Constructs the canonical Gate-3 BundleManifest from live
+  build artifacts; records the medical director's (and optional second
+  attester's) decision (attest / decline / escalate-to-board); binds the
+  decision cryptographically to the bundle's content hash with an RFC
+  3161 time-stamp from a manifest-pinned TSA. Decline-without-publish
+  semantics. No relaxation of any prior gate. Post-attestation bundle
+  content is immutable; corrections require a new bundle with explicit
+  predecessor chain.
+version: "1.0.0"
+schema_lifecycle: stable
+last_reviewed: "HUMAN_FILL: ISO-8601 date of most recent panel review of this schema"
+authority:
+  adr: ADR-HTN-001
+  framework: cpg-htn-2025-acc-aha
+  parent_framework: aiwg-training
+license: MIT
+
+# -----------------------------------------------------------------------------
+# 1. POLICY (normative)
+# -----------------------------------------------------------------------------
+
+policy:
+
+  attester_identity:
+    rule: >
+      The primary attester is the medical director (or named designate
+      per ADR-HTN-001 D9) with NIST SP 800-63 IAL3/AAL3 identity
+      assurance. Where institutional policy requires dual control, an
+      optional second attester is named (e.g., compliance officer, chief
+      medical informatics officer, alternate medical director,
+      panel-chair-cohort) at IAL2/AAL2 minimum (institutional policy may
+      pin higher).
+
+  bundle_completeness:
+    rule: >
+      The Gate-3 BundleManifest MUST contain exactly the closed set of
+      member ids enumerated in §2.1 (each appearing exactly once). Any
+      missing member is a release blocker. The bundle MUST be
+      constructed from live build artifacts at session time; pre-recorded
+      hashes are not trusted.
+
+  bundle_integrity_recompute:
+    rule: >
+      The `bundle_sha256` MUST be recomputed by `safety-case-attest`:
+        - at session start (preflight),
+        - immediately before signing,
+        - immediately after signing (post-validation).
+      All three values MUST match. Any mismatch BLOCKS attest mode and
+      requires a fresh session.
+
+  bundle_member_canonicalization:
+    rule: >
+      Every member's content hash MUST be computed under the
+      canonicalization rule declared on its kind (see §2.2). For
+      JSON/JSON-LD/YAML members, RFC 8785 (JCS) is applied; for CQL/ELM
+      directories, a deterministic file-list JCS object ordered by path
+      ascending; for text/Markdown members, NFC normalization + trailing
+      newline normalization, then SHA-256. Any deviation is a release
+      blocker.
+
+  decline_without_publish:
+    rule: >
+      A `declined` attestation is terminal for the bundle it covers.
+      Publication is forbidden against a declined bundle. Re-attestation
+      requires the orchestrator to re-run upstream phases addressed by
+      the decline reason, produce a new bundle with a new
+      `bundle_sha256`, and post a fresh attestation document with
+      `predecessor_attestation_id` referring to the declined one. The
+      old attestation is retained immutably for audit.
+
+  no_relax_of_prior_gates:
+    rule: >
+      No attestation rationale, comment, or acknowledgement may relax a
+      prior gate's outcome. The attester MAY decline; the attester MUST
+      NOT publish past:
+        - any Gate 1 reject,
+        - any Gate 2 reject,
+        - any Library coverage below 95.0%,
+        - any unverified hard-block invariant,
+        - the age gate (>= 18),
+        - PREVENT canonicalization (no PCE-legacy substitution),
+        - any PHI hit,
+        - any copyright envelope overage,
+        - any HL7 Validator error,
+        - any soft-warning posture on `htn-pregnancy-denylist`,
+        - first-publish-without-Communication-resource.
+      Validators MUST scan attestation rationale for relax-of-prior-gates
+      proposals (closed pattern set in §6 G3A-INV-15) and treat any
+      match as a release blocker.
+
+  acknowledgement_toggles_required:
+    rule: >
+      An `attest` decision MUST include the closed set of
+      acknowledgement toggles in §3.5, all set to `true`. Missing or
+      `false` toggles BLOCK the attest decision (`G3A-INV-08`).
+
+  decline_reason_required:
+    rule: >
+      A `decline` decision MUST include a `decline_reason` from the
+      closed enum in §2.5. Free-text rationale is also required.
+
+  coi_auto_disqualification:
+    rule: >
+      An attester with a material COI on the build's clinical content
+      (e.g., a financial-pharmaceutical relationship for a build whose
+      records bear on that drug class) is automatically disqualified
+      from attestation. The schema records the disqualification as
+      `decision == "escalate-to-board"`; a substitute attester is
+      appointed by the institution's board.
+
+  post_attestation_immutability:
+    rule: >
+      Once an attestation is recorded with `decision ∈ {attest, decline}`
+      and `signature.verifies == true`, neither its `signature` nor the
+      `bundle_sha256` it covers may be mutated. The attestation
+      document's lifecycle state transitions monotonically:
+        draft → awaiting-second-attester (optional) → attested|declined
+      and any new attestation is a new document with explicit
+      predecessor.
+
+  signature_algorithm:
+    rule: >
+      Signatures use Ed25519 (default) or ECDSA-P256-SHA256 over the
+      canonical JCS (RFC 8785) form of the signed payload. The algorithm
+      and key identifier are pinned per attestation; mismatch is a
+      release blocker.
+
+  time_stamping:
+    rule: >
+      Every signature carries an RFC 3161 time-stamp from a TSA pinned
+      in the active manifest's `tsa_list[]` whose certificate validity
+      covers `signed_at`. Time-stamp absence is a release blocker.
+
+  publication_signal:
+    rule: >
+      Publication is permitted ONLY when `attestation.state ==
+      "attested"` and (where dual control is required) both attesters
+      have decided `attest`. The orchestrator (`flow-hbp-2025-build`
+      P28) MUST refuse to publish on any other state.
+
+# -----------------------------------------------------------------------------
+# 2. CLOSED ENUMERATIONS
+# -----------------------------------------------------------------------------
+
+$defs:
+
+  # ---------------------------------------------------------------------------
+  # 2.1 Bundle member ids (closed; see §2.1 of safety-case-attest)
+  # ---------------------------------------------------------------------------
+  BundleMemberId:
+    type: string
+    enum:
+      - mfst
+      - sair
+      - recs
+      - aus
+      - g1
+      - g2
+      - cql
+      - cov
+      - cdsh
+      - safe
+      - phi
+      - cpr
+      - ig
+      - comm
+      - card
+      - cgat
+      - rtm
+      - prov
+
+  # ---------------------------------------------------------------------------
+  # 2.2 Bundle member kinds (drives canonicalization rule)
+  # ---------------------------------------------------------------------------
+  BundleMemberKind:
+    type: string
+    enum:
+      - manifest
+      - sair
+      - records
+      - atomic-units
+      - gate1-register-set
+      - gate2-register-set
+      - cql-library-set
+      - coverage-report-set
+      - cds-hooks-service-set
+      - safety-case
+      - phi-report
+      - copyright-report
+      - ig-build
+      - communication-resource
+      - guideline-card
+      - cgat-matrix
+      - regulatory-traceability
+      - prov-bundle
+
+  # ---------------------------------------------------------------------------
+  # 2.3 Canonicalization rules
+  # ---------------------------------------------------------------------------
+  CanonicalizationRule:
+    type: string
+    enum:
+      - jcs-rfc8785-then-sha256
+      - file-list-jcs-then-sha256
+      - nfc-trailing-newline-then-sha256
+
+  # ---------------------------------------------------------------------------
+  # 2.4 Attester roles
+  # ---------------------------------------------------------------------------
+  AttesterRole:
+    type: string
+    enum:
+      - medical-director
+      - compliance-officer
+      - chief-medical-informatics-officer
+      - panel-chair-cohort
+      - alternate-medical-director
+
+  # ---------------------------------------------------------------------------
+  # 2.5 Attester decisions
+  # ---------------------------------------------------------------------------
+  AttesterDecision:
+    type: string
+    enum:
+      - attest
+      - decline
+      - escalate-to-board
+
+  # ---------------------------------------------------------------------------
+  # 2.6 Decline reasons (closed set)
+  # ---------------------------------------------------------------------------
+  DeclineReason:
+    type: string
+    enum:
+      - bundle-drift
+      - gate1-incomplete
+      - gate2-incomplete
+      - coverage-below-floor
+      - hard-block-unverified
+      - phi-detected
+      - copyright-overage
+      - ig-validator-error
+      - pregnancy-not-order-select
+      - predecessor-supersession-malformed
+      - intended-use-mismatch
+      - errata-blocker-open
+      - tsa-unavailable
+      - other-clinical-concern
+      - other-governance-concern
+
+  # ---------------------------------------------------------------------------
+  # 2.7 Attestation lifecycle
+  # ---------------------------------------------------------------------------
+  AttestationState:
+    type: string
+    enum:
+      - draft
+      - awaiting-time-stamp
+      - awaiting-second-attester
+      - attested
+      - declined
+      - escalated-to-board
+      - superseded
+      - withdrawn
+
+  # ---------------------------------------------------------------------------
+  # 2.8 Identity / authenticator assurance
+  # ---------------------------------------------------------------------------
+  IdentityAssuranceLevel:
+    type: string
+    enum: [IAL1, IAL2, IAL3]
+
+  AuthenticatorAssuranceLevel:
+    type: string
+    enum: [AAL1, AAL2, AAL3]
+
+  # ---------------------------------------------------------------------------
+  # 2.9 Credential kinds (subset relevant to attesters)
+  # ---------------------------------------------------------------------------
+  CredentialKind:
+    type: string
+    enum:
+      - medical-director
+      - alternate-medical-director
+      - compliance-officer
+      - chief-medical-informatics-officer
+      - state-medical-license
+      - institutional-credential
+      - other
+
+  # ---------------------------------------------------------------------------
+  # 2.10 Signature algorithms
+  # ---------------------------------------------------------------------------
+  SignatureAlgorithm:
+    type: string
+    enum:
+      - Ed25519
+      - ECDSA-P256-SHA256
+
+  # ---------------------------------------------------------------------------
+  # 2.11 COI kinds (re-stated for self-containment)
+  # ---------------------------------------------------------------------------
+  COIKind:
+    type: string
+    enum:
+      - none
+      - financial-pharmaceutical
+      - financial-device
+      - research-grant
+      - speakers-bureau
+      - consultancy
+      - equity-holding
+      - employment-related
+      - family-relationship
+      - publication-author
+      - guideline-author
+      - other
+
+  # ---------------------------------------------------------------------------
+  # 2.12 Audit-event kinds
+  # ---------------------------------------------------------------------------
+  AuditEventKind:
+    type: string
+    enum:
+      - attestation-drafted
+      - bundle-recomputed
+      - attest-recorded
+      - decline-recorded
+      - second-attest-recorded
+      - second-decline-recorded
+      - escalate-to-board-recorded
+      - attestation-superseded
+      - attestation-withdrawn
+      - relax-of-prior-gate-attempted
+      - bundle-edit-attempt
+
+# -----------------------------------------------------------------------------
+# 3. STRUCTURED TYPES
+# -----------------------------------------------------------------------------
+
+  # ---------------------------------------------------------------------------
+  # 3.1 BundleMember
+  # ---------------------------------------------------------------------------
+  BundleMember:
+    type: object
+    additionalProperties: false
+    required: [id, kind, path, canonicalization, sha256]
+    properties:
+      id:                  { $ref: "#/$defs/BundleMemberId" }
+      kind:                { $ref: "#/$defs/BundleMemberKind" }
+      path:
+        type: string
+        description: >
+          Relative path to the member at session time. For multi-file
+          members (g1, g2, cql, cov, cdsh, ig), this is the directory
+          path; the per-file enumeration is captured in
+          `file_list` below.
+      canonicalization:    { $ref: "#/$defs/CanonicalizationRule" }
+      sha256:
+        type: string
+        pattern: "^[0-9a-f]{64}$"
+        description: SHA-256 over the canonicalized bytes per `canonicalization`.
+      file_list:
+        type: array
+        description: >
+          For multi-file members, the deterministic file enumeration
+          used to compute `sha256` under `file-list-jcs-then-sha256`.
+          Empty for single-file members.
+        items:
+          type: object
+          additionalProperties: false
+          required: [path, sha256]
+          properties:
+            path:    { type: string }
+            sha256:  { type: string, pattern: "^[0-9a-f]{64}$" }
+      member_count:
+        type: [integer, "null"]
+        minimum: 0
+        description: >
+          For set-kind members (g1, g2, cql, cov, cdsh), the count of
+          contained items. The schema records the count for fast audit;
+          validators recompute and compare.
+
+  # ---------------------------------------------------------------------------
+  # 3.2 BundleManifest
+  # ---------------------------------------------------------------------------
+  BundleManifest:
+    type: object
+    additionalProperties: false
+    required: [schema_version, build_run_id, manifest_version, members]
+    properties:
+      schema_version:
+        type: string
+        const: "1.0.0"
+      build_run_id:        { type: string, format: uuid }
+      manifest_version:
+        type: string
+        pattern: "^[0-9]+\\.[0-9]+\\.[0-9]+$"
+      members:
+        type: array
+        minItems: 18
+        maxItems: 18
+        items: { $ref: "#/$defs/BundleMember" }
+        description: >
+          Exactly 18 members. Each `BundleMemberId` MUST appear exactly
+          once. Validators reject duplicates or missing ids.
+
+  # ---------------------------------------------------------------------------
+  # 3.3 IdentityProof
+  # ---------------------------------------------------------------------------
+  IdentityProof:
+    type: object
+    additionalProperties: false
+    required: [ial, aal, proofing_method, proofing_evidence_uri, proofed_at, proofed_by_org]
+    properties:
+      ial: { $ref: "#/$defs/IdentityAssuranceLevel" }
+      aal: { $ref: "#/$defs/AuthenticatorAssuranceLevel" }
+      proofing_method:        { type: string }
+      proofing_evidence_uri:  { type: string, format: uri }
+      proofed_at:             { type: string, format: date-time }
+      proofed_by_org:         { type: string }
+      proofed_by_person:      { type: [string, "null"] }
+
+  # ---------------------------------------------------------------------------
+  # 3.4 Credential
+  # ---------------------------------------------------------------------------
+  Credential:
+    type: object
+    additionalProperties: false
+    required: [kind, issuer, evidence_uri, valid_from]
+    properties:
+      kind:           { $ref: "#/$defs/CredentialKind" }
+      issuer:         { type: string }
+      evidence_uri:   { type: string, format: uri }
+      valid_from:     { type: string, format: date }
+      valid_until:    { type: [string, "null"], format: date }
+      verified_at:    { type: string, format: date-time }
+      verified_by:    { type: string }
+
+  # ---------------------------------------------------------------------------
+  # 3.5 ConflictOfInterest
+  # ---------------------------------------------------------------------------
+  ConflictOfInterest:
+    type: object
+    additionalProperties: false
+    required: [kind, disclosed_at, scope]
+    properties:
+      kind:           { $ref: "#/$defs/COIKind" }
+      counterparty:   { type: [string, "null"] }
+      scope:
+        type: string
+        enum:
+          - none
+          - drug-class
+          - device-class
+          - therapeutic-area
+          - guideline-document
+          - build-level
+          - other
+      scope_detail:   { type: [string, "null"] }
+      disclosed_at:   { type: string, format: date-time }
+      mitigation:     { type: [string, "null"] }
+      auto_disqualifies_build:
+        type: boolean
+        description: True iff this COI auto-disqualifies the attester from this build.
+
+  # ---------------------------------------------------------------------------
+  # 3.6 Attester (medical director or second attester)
+  # ---------------------------------------------------------------------------
+  Attester:
+    type: object
+    additionalProperties: false
+    required:
+      - attester_id
+      - legal_name
+      - role
+      - identity_proof
+      - credentials
+      - coi_disclosures
+      - public_key
+    properties:
+      attester_id:
+        type: string
+        pattern: "^rev-[0-9a-f]{16}$"
+        description: >
+          Stable, deterministic ID. The `rev-` prefix is shared with the
+          Gate 1 / Gate 2 reviewer identifier namespace by design — an
+          institution's medical director may also appear as a panel
+          chair on contributing Gate 1 / Gate 2 cohorts.
+      legal_name:                   { type: string, minLength: 1 }
+      preferred_credential_string:  { type: [string, "null"] }
+      role:                         { $ref: "#/$defs/AttesterRole" }
+      institution:                  { type: string }
+      identity_proof:               { $ref: "#/$defs/IdentityProof" }
+      credentials:
+        type: array
+        minItems: 1
+        items: { $ref: "#/$defs/Credential" }
+      coi_disclosures:
+        type: array
+        minItems: 1
+        items: { $ref: "#/$defs/ConflictOfInterest" }
+      public_key:
+        type: object
+        additionalProperties: false
+        required: [algorithm, key_id, key_pem]
+        properties:
+          algorithm:           { $ref: "#/$defs/SignatureAlgorithm" }
+          key_id:              { type: string }
+          key_pem:             { type: string }
+          fingerprint_sha256:  { type: string, pattern: "^[0-9a-f]{64}$" }
+      added_to_attestation_at: { type: string, format: date-time }
+
+  # ---------------------------------------------------------------------------
+  # 3.7 TimeStamp / Signature (re-stated for self-containment)
+  # ---------------------------------------------------------------------------
+  TimeStamp:
+    type: object
+    additionalProperties: false
+    required: [tsa_name, tsa_url, tsa_cert_fingerprint_sha256, time, token_b64]
+    properties:
+      tsa_name:                    { type: string }
+      tsa_url:                     { type: string, format: uri }
+      tsa_cert_fingerprint_sha256: { type: string, pattern: "^[0-9a-f]{64}$" }
+      time:                        { type: string, format: date-time }
+      token_b64:                   { type: string }
+
+  Signature:
+    type: object
+    additionalProperties: false
+    required: [algorithm, key_id, payload_canonical_form, payload_sha256, signature_b64, time_stamp]
+    properties:
+      algorithm:               { $ref: "#/$defs/SignatureAlgorithm" }
+      key_id:                  { type: string }
+      payload_canonical_form:
+        type: string
+        enum: [json-canonical-rfc8785]
+      payload_sha256:          { type: string, pattern: "^[0-9a-f]{64}$" }
+      signature_b64:           { type: string }
+      time_stamp:              { $ref: "#/$defs/TimeStamp" }
+      verifies:                { type: boolean }
+
+  # ---------------------------------------------------------------------------
+  # 3.8 Acknowledgements (required for `attest` decisions)
+  # ---------------------------------------------------------------------------
+  Acknowledgements:
+    type: object
+    additionalProperties: false
+    required:
+      - bundle_integrity_attested
+      - gate1_finalization_acknowledged
+      - gate2_finalization_acknowledged
+      - hazards_and_mitigations_acknowledged
+      - intended_use_boundary_acknowledged
+      - phi_clean_attested
+      - copyright_envelope_attested
+      - ig_validator_clean_attested
+      - pregnancy_order_select_hardrefuse_attested
+      - supersession_communication_present_attested
+    properties:
+      bundle_integrity_attested:                       { type: boolean }
+      gate1_finalization_acknowledged:                 { type: boolean }
+      gate2_finalization_acknowledged:                 { type: boolean }
+      hazards_and_mitigations_acknowledged:            { type: boolean }
+      intended_use_boundary_acknowledged:              { type: boolean }
+      phi_clean_attested:                              { type: boolean }
+      copyright_envelope_attested:                     { type: boolean }
+      ig_validator_clean_attested:                     { type: boolean }
+      pregnancy_order_select_hardrefuse_attested:      { type: boolean }
+      supersession_communication_present_attested:     { type: boolean }
+
+  # ---------------------------------------------------------------------------
+  # 3.9 Attestation (single attester's decision)
+  # ---------------------------------------------------------------------------
+  Attestation:
+    type: object
+    additionalProperties: false
+    required:
+      - attestation_entry_id
+      - attester_id
+      - role
+      - bundle_sha256
+      - manifest_payload_sha256_at_signoff
+      - decision
+      - signed_at
+      - signature
+    properties:
+      attestation_entry_id:
+        type: string
+        pattern: "^att-[0-9a-f]{16}$"
+        description: Stable, deterministic id (truncated SHA-256 of build_run_id + attester_id + bundle_sha256 + signed_at).
+      attester_id:                 { type: string, pattern: "^rev-[0-9a-f]{16}$" }
+      role:                        { $ref: "#/$defs/AttesterRole" }
+      bundle_sha256:
+        type: string
+        pattern: "^[0-9a-f]{64}$"
+        description: SHA-256 of the JCS-canonical BundleManifest (with `members` ordered by id ascending). The signature covers this hash.
+      manifest_payload_sha256_at_signoff:
+        type: string
+        pattern: "^[0-9a-f]{64}$"
+        description: SHA-256 of the active manifest's `fixity.manifest_sha256` at signing time.
+      decision:                    { $ref: "#/$defs/AttesterDecision" }
+      acknowledgements:
+        oneOf:
+          - { $ref: "#/$defs/Acknowledgements" }
+          - type: "null"
+        description: Required (all true) for `decision == "attest"`. Null permitted (and expected) for `decline` and `escalate-to-board`.
+      decline_reason:
+        oneOf:
+          - { $ref: "#/$defs/DeclineReason" }
+          - type: "null"
+        description: Required for `decision == "decline"`. Null otherwise.
+      rationale:
+        type: string
+        minLength: 1
+      coi_attestation_at_signoff:
+        type: object
+        additionalProperties: false
+        required: [no_undisclosed_coi, applicable_coi_kinds]
+        properties:
+          no_undisclosed_coi:    { type: boolean }
+          applicable_coi_kinds:
+            type: array
+            items: { $ref: "#/$defs/COIKind" }
+      session_attestations:
+        type: object
+        additionalProperties: false
+        required:
+          - reviewed_bundle_integrity_pane
+          - reviewed_gate1_summary_pane
+          - reviewed_gate2_summary_pane
+          - reviewed_hazard_log_and_safety_case_pane
+          - reviewed_phi_pane
+          - reviewed_copyright_pane
+          - reviewed_ig_validator_pane
+          - reviewed_cds_hooks_wiring_pane
+          - reviewed_supersession_pane
+          - reviewed_documentation_pane
+          - reviewed_intended_use_pane
+        properties:
+          reviewed_bundle_integrity_pane:               { type: boolean }
+          reviewed_gate1_summary_pane:                  { type: boolean }
+          reviewed_gate2_summary_pane:                  { type: boolean }
+          reviewed_hazard_log_and_safety_case_pane:     { type: boolean }
+          reviewed_phi_pane:                            { type: boolean }
+          reviewed_copyright_pane:                      { type: boolean }
+          reviewed_ig_validator_pane:                   { type: boolean }
+          reviewed_cds_hooks_wiring_pane:               { type: boolean }
+          reviewed_supersession_pane:                   { type: boolean }
+          reviewed_documentation_pane:                  { type: boolean }
+          reviewed_intended_use_pane:                   { type: boolean }
+      signed_at:                   { type: string, format: date-time }
+      signature:                   { $ref: "#/$defs/Signature" }
+
+  # ---------------------------------------------------------------------------
+  # 3.10 AuditEvent (append-only)
+  # ---------------------------------------------------------------------------
+  AuditEvent:
+    type: object
+    additionalProperties: false
+    required: [event_id, occurred_at, kind, actor_id, payload_sha256]
+    properties:
+      event_id:        { type: string, pattern: "^evt-[0-9a-f]{16}$" }
+      occurred_at:     { type: string, format: date-time }
+      kind:            { $ref: "#/$defs/AuditEventKind" }
+      actor_id:        { type: string }
+      payload_sha256:  { type: string, pattern: "^[0-9a-f]{64}$" }
+      prov_activity_id:{ type: [string, "null"] }
+
+# -----------------------------------------------------------------------------
+# 4. ROOT TYPE — Gate3Attestation
+# -----------------------------------------------------------------------------
+type: object
+additionalProperties: false
+required:
+  - schema_version
+  - attestation_id
+  - attestation_version
+  - guideline_manifest_ref
+  - build
+  - dual_control_required
+  - bundle_manifest
+  - bundle_sha256
+  - attesters
+  - attestations
+  - state
+  - audit_log
+  - fixity
+properties:
+
+  schema_version:
+    type: string
+    const: "1.0.0"
+
+  attestation_id:
+    type: string
+    pattern: "^att-doc-[0-9a-f]{16}$"
+    description: >
+      Stable, deterministic id (truncated SHA-256 of build_run_id +
+      bundle_sha256 + attestation_version).
+
+  attestation_version:
+    type: string
+    pattern: "^[0-9]+\\.[0-9]+\\.[0-9]+$"
+
+  predecessor_attestation_id:
+    type: [string, "null"]
+    pattern: "^att-doc-[0-9a-f]{16}$|^null$"
+    description: >
+      Set when this attestation supersedes or follows a declined
+      predecessor. Forms the predecessor-attestation chain.
+
+  predecessor_attestation_state:
+    type: [string, "null"]
+    description: >
+      The state the predecessor was in when superseded. Valid values:
+      `declined`, `superseded`, `escalated-to-board`, `withdrawn`.
+      Validators MUST resolve and verify.
+    enum: [declined, superseded, escalated-to-board, withdrawn, null]
+
+  guideline_manifest_ref:
+    type: string
+    description: Pointer to the active `schemas/guideline-manifest-hbp-2025.yaml` instance.
+
+  # ---------------------------------------------------------------------------
+  # 4.1 Build identity
+  # ---------------------------------------------------------------------------
+  build:
+    type: object
+    additionalProperties: false
+    required: [run_id, build_version_label, opened_at]
+    properties:
+      run_id:                 { type: string, format: uuid }
+      build_version_label:
+        type: string
+        pattern: "^v[0-9]+\\.[0-9]+\\.[0-9]+\\+ACC-AHA-2025\\+US\\+[0-9]{4}-[0-9]{2}-[0-9]{2}$"
+      opened_at:              { type: string, format: date-time }
+      attested_at:            { type: [string, "null"], format: date-time }
+      declined_at:            { type: [string, "null"], format: date-time }
+      escalated_to_board_at:  { type: [string, "null"], format: date-time }
+      first_publish:
+        type: boolean
+        description: True iff no prior `dataset-version-published` event exists for builds derived from this manifest.
+
+  # ---------------------------------------------------------------------------
+  # 4.2 Dual control
+  # ---------------------------------------------------------------------------
+  dual_control_required:
+    type: boolean
+    description: >
+      True iff institutional policy requires two attestations
+      (medical director + second attester). When false, a single
+      `attest` decision by the medical director is sufficient.
+
+  # ---------------------------------------------------------------------------
+  # 4.3 Bundle manifest and bundle hash
+  # ---------------------------------------------------------------------------
+  bundle_manifest:        { $ref: "#/$defs/BundleManifest" }
+  bundle_sha256:
+    type: string
+    pattern: "^[0-9a-f]{64}$"
+    description: >
+      SHA-256 over the JCS-canonical form of `bundle_manifest` (with
+      `members` ordered by id ascending). Recomputed by the validator;
+      mismatch is a release blocker.
+
+  # ---------------------------------------------------------------------------
+  # 4.4 Attesters (1 primary + optional 1 second)
+  # ---------------------------------------------------------------------------
+  attesters:
+    type: array
+    minItems: 1
+    maxItems: 2
+    items: { $ref: "#/$defs/Attester" }
+    description: >
+      The first entry is the primary attester (medical director or
+      alternate medical director, IAL3/AAL3). The second entry, if
+      present and dual_control_required == true, is the second attester
+      whose role is one of: compliance-officer,
+      chief-medical-informatics-officer, alternate-medical-director,
+      panel-chair-cohort.
+
+  # ---------------------------------------------------------------------------
+  # 4.5 Attestations (the recorded decisions)
+  # ---------------------------------------------------------------------------
+  attestations:
+    type: array
+    minItems: 0
+    maxItems: 2
+    items: { $ref: "#/$defs/Attestation" }
+    description: >
+      The recorded attester decisions. Order corresponds to `attesters[]`
+      where present (primary attester at index 0; second attester at
+      index 1).
+
+  # ---------------------------------------------------------------------------
+  # 4.6 State
+  # ---------------------------------------------------------------------------
+  state:                  { $ref: "#/$defs/AttestationState" }
+
+  # ---------------------------------------------------------------------------
+  # 4.7 Audit log (append-only)
+  # ---------------------------------------------------------------------------
+  audit_log:
+    type: array
+    items: { $ref: "#/$defs/AuditEvent" }
+
+  # ---------------------------------------------------------------------------
+  # 4.8 Fixity
+  # ---------------------------------------------------------------------------
+  fixity:
+    type: object
+    additionalProperties: false
+    required: [attestation_sha256, computed_at, canonical_form]
+    properties:
+      attestation_sha256:
+        type: string
+        pattern: "^[0-9a-f]{64}$"
+        description: SHA-256 of the JCS-canonical form of this document with `fixity` excluded.
+      computed_at:    { type: string, format: date-time }
+      canonical_form: { type: string, enum: [json-canonical-rfc8785] }
+
+# -----------------------------------------------------------------------------
+# 5. CROSS-FIELD INVARIANTS (validators MUST enforce)
+# -----------------------------------------------------------------------------
+
+invariants:
+
+  - id: G3A-INV-01
+    description: >
+      `bundle_manifest.members[]` MUST contain each `BundleMemberId`
+      exactly once (18 entries total). Duplicates or missing ids are a
+      release blocker.
+
+  - id: G3A-INV-02
+    description: >
+      Every `bundle_manifest.members[].sha256` MUST equal the SHA-256
+      of the canonicalized bytes produced by the rule declared in
+      `canonicalization` for that member's path. Validators recompute
+      from live artifacts; producer claims are not trusted.
+
+  - id: G3A-INV-03
+    description: >
+      `bundle_sha256` MUST equal SHA-256 of the JCS-canonical form of
+      `bundle_manifest` with `members` ordered by id ascending.
+      Validators recompute and compare; mismatch is a release blocker.
+
+  - id: G3A-INV-04
+    description: >
+      Every `Attestation.bundle_sha256` MUST equal the document's
+      `bundle_sha256` at the time the attestation was signed. Drift is
+      a release blocker (post_signoff_immutability).
+
+  - id: G3A-INV-05
+    description: >
+      Every `Attestation.attester_id` MUST refer to an Attester in
+      `attesters[]`. Attestations from non-listed attesters are a
+      release blocker.
+
+  - id: G3A-INV-06
+    description: >
+      The primary attester (`attesters[0]`) MUST have role
+      `medical-director` or `alternate-medical-director`, and
+      `identity_proof.ial == "IAL3"` AND `aal == "AAL3"`. Lower
+      assurance is a release blocker.
+
+  - id: G3A-INV-07
+    description: >
+      When `dual_control_required == true`, `attesters[]` MUST have
+      length 2. The second attester's role MUST be one of:
+      compliance-officer, chief-medical-informatics-officer,
+      alternate-medical-director, panel-chair-cohort. The two attesters
+      MUST have distinct `attester_id` values.
+
+  - id: G3A-INV-08
+    description: >
+      For every `Attestation` whose `decision == "attest"`,
+      `acknowledgements` MUST be non-null AND every property in
+      `Acknowledgements` (10 toggles) MUST be true. Missing or false
+      toggles are a release blocker.
+
+  - id: G3A-INV-09
+    description: >
+      For every `Attestation` whose `decision == "decline"`,
+      `decline_reason` MUST be a member of `DeclineReason`. Free-text
+      `rationale` MUST be non-empty.
+
+  - id: G3A-INV-10
+    description: >
+      Every `Attestation.signature.payload_sha256` MUST equal the
+      SHA-256 of the JCS-canonical form of the Attestation candidate
+      with `signature` field stripped at signing time. Validators
+      regenerate and compare.
+
+  - id: G3A-INV-11
+    description: >
+      Every `Attestation.signature` MUST verify under the corresponding
+      Attester's `public_key` (algorithm + key_id matched). Validators
+      perform the cryptographic verification; the producer's
+      `verifies: true` claim is ignored.
+
+  - id: G3A-INV-12
+    description: >
+      Every `Attestation.signature.time_stamp.tsa_cert_fingerprint_sha256`
+      MUST be a member of the active manifest's `tsa_list[].
+      tsa_cert_fingerprint_sha256`, AND the time-stamp `time` MUST
+      fall within that TSA cert's validity window.
+
+  - id: G3A-INV-13
+    description: >
+      Every `Attestation.manifest_payload_sha256_at_signoff` MUST equal
+      the active manifest's `fixity.manifest_sha256` at signing time.
+      Manifest drift between signoff and validation is a release
+      blocker.
+
+  - id: G3A-INV-14
+    description: >
+      `state` consistency MUST hold:
+        - `state == "draft"` requires `attestations == []`.
+        - `state == "awaiting-second-attester"` requires
+          `dual_control_required == true` AND
+          `attestations[]` has exactly one entry with `decision == "attest"`.
+        - `state == "attested"` requires:
+          (a) `dual_control_required == false` AND
+              `attestations[]` has exactly one entry with `decision == "attest"`,
+          OR
+          (b) `dual_control_required == true` AND
+              `attestations[]` has exactly two entries, both with
+              `decision == "attest"`.
+        - `state == "declined"` requires `attestations[]` has at least one
+          entry with `decision == "decline"`.
+        - `state == "escalated-to-board"` requires at least one entry with
+          `decision == "escalate-to-board"`.
+      Mismatched state is a release blocker.
+
+  - id: G3A-INV-15
+    description: >
+      Validators MUST scan attestation rationale for relax-of-prior-gates
+      proposals against the closed pattern set (no override of Gate 1 /
+      Gate 2 reject; no relax of pregnancy denylist; no PCE-legacy
+      substitution; no age-gate lowering; no acceptance below coverage
+      floor; no acceptance with PHI hit, copyright overage, or HL7
+      Validator error; no first-publish-without-Communication-resource).
+      Any match is a release blocker; the auto-detection MUST also
+      append a `relax-of-prior-gate-attempted` event to `audit_log[]`.
+
+  - id: G3A-INV-16
+    description: >
+      `state == "attested"` requires that EVERY upstream prerequisite
+      verifies at validation time:
+        - The active manifest is `state == "active"`,
+          `errata_watch.blockers_open == []`, and
+          `medical_director_signoff` verifies.
+        - Every `bundle_manifest.members` of kind `gate1-register-set`
+          and `gate2-register-set` resolves to register files in state
+          `finalized`.
+        - The PHI report (member id `phi`) reports zero hits.
+        - The copyright report (member id `cpr`) reports per-page and
+          document-wide footprints within manifest caps.
+        - The IG build (member id `ig`) reports HL7 Validator clean and
+          all resources reachable from the IG entry.
+        - The CDS Hooks set (member id `cdsh`) declares
+          `htn-pregnancy-denylist` as `order-select` with a hard-refusal
+          posture.
+        - For `build.first_publish == true`, the supersession
+          Communication resource (member id `comm`) is present and wired
+          to the IG.
+
+  - id: G3A-INV-17
+    description: >
+      A `declined` attestation is terminal: no later `Attestation` in
+      the same document may set `decision == "attest"`. Re-attestation
+      requires a NEW attestation document with
+      `predecessor_attestation_id` referring to the declined one.
+
+  - id: G3A-INV-18
+    description: >
+      For any Attestation whose `coi_attestation_at_signoff.applicable_coi_kinds[]`
+      contains a kind whose corresponding `coi_disclosures[]` entry has
+      `auto_disqualifies_build == true`, the decision MUST be
+      `escalate-to-board`. Validators MUST refuse `attest` decisions
+      where the attester is auto-disqualified.
+
+  - id: G3A-INV-19
+    description: >
+      `audit_log[]` MUST be append-only and ordered by `occurred_at`.
+      The validator computes the chained hash of events and compares
+      against a separately-maintained chain; out-of-order or missing
+      events indicate tampering and are release blockers.
+
+  - id: G3A-INV-20
+    description: >
+      `fixity.attestation_sha256` MUST equal SHA-256 of the
+      JCS-canonical form of this document with `fixity` excluded. The
+      hash MUST be deterministic across re-runs given identical inputs.
+
+  - id: G3A-INV-21
+    description: >
+      `predecessor_attestation_id` MUST be set when this attestation
+      follows a declined or superseded predecessor. The predecessor's
+      `state` (recorded in `predecessor_attestation_state`) MUST be one
+      of `declined`, `superseded`, `escalated-to-board`, `withdrawn`.
+
+  - id: G3A-INV-22
+    description: >
+      `build.build_version_label` MUST recompute exactly from the active
+      manifest's
+      `v<manifest_version>+ACC-AHA-2025+<jurisdiction>+<effective_date>`.
+      Mismatch is a release blocker.
+
+# =============================================================================
+# 6. WORKED EXAMPLES (shape-correctness fixtures)
+# -----------------------------------------------------------------------------
+# Two examples are provided:
+#   6.1 An attested document with single-control (medical director only).
+#   6.2 A declined document with reason `coverage-below-floor`.
+#
+# EVERY field whose value can ONLY come from a real attester, real KMS
+# key, real institutional contract, or live build artifacts is marked
+# `HUMAN_FILL` with explicit instructions. The pipeline refuses to
+# operate on attestations containing `HUMAN_FILL` tokens.
+# =============================================================================
+
+examples:
+
+  # ---------------------------------------------------------------------------
+  # 6.1 Attested (single control, first publish, supersession Communication present)
+  # ---------------------------------------------------------------------------
+  - schema_version: "1.0.0"
+    attestation_id: "att-doc-HUMAN_FILL_16HEX"
+    attestation_version: "1.0.0"
+    predecessor_attestation_id: null
+    predecessor_attestation_state: null
+    guideline_manifest_ref: "guideline-manifest-hbp-2025.v1.0.0+ACC-AHA-2025+US+HUMAN_FILL_DATE.yaml"
+
+    build:
+      run_id: "HUMAN_FILL_UUID"
+      build_version_label: "v1.0.0+ACC-AHA-2025+US+HUMAN_FILL_ISO_DATE"
+      opened_at: "HUMAN_FILL_ISO_DATETIME"
+      attested_at: "HUMAN_FILL_ISO_DATETIME"
+      declined_at: null
+      escalated_to_board_at: null
+      first_publish: true
+
+    dual_control_required: false
+
+    bundle_manifest:
+      schema_version: "1.0.0"
+      build_run_id: "HUMAN_FILL_UUID"
+      manifest_version: "1.0.0"
+      members:
+        - { id: aus,  kind: atomic-units,            path: "work/HUMAN_FILL_RUN_ID/atomic-units.json", canonicalization: jcs-rfc8785-then-sha256,           sha256: "HUMAN_FILL_64HEX", file_list: [], member_count: null }
+        - { id: card, kind: guideline-card,          path: "work/HUMAN_FILL_RUN_ID/docs/guideline-card.md", canonicalization: nfc-trailing-newline-then-sha256, sha256: "HUMAN_FILL_64HEX", file_list: [], member_count: null }
+        - { id: cdsh, kind: cds-hooks-service-set,   path: "work/HUMAN_FILL_RUN_ID/cds-hooks/", canonicalization: file-list-jcs-then-sha256,                  sha256: "HUMAN_FILL_64HEX", file_list: [ { path: "htn-bp-stage-and-confirm.json", sha256: "HUMAN_FILL_64HEX" }, { path: "htn-prevent-risk-and-threshold.json", sha256: "HUMAN_FILL_64HEX" }, { path: "htn-pharm-first-line-check.json", sha256: "HUMAN_FILL_64HEX" }, { path: "htn-pregnancy-denylist.json", sha256: "HUMAN_FILL_64HEX" }, { path: "htn-resistant-workup.json", sha256: "HUMAN_FILL_64HEX" }, { path: "htn-secondary-screen.json", sha256: "HUMAN_FILL_64HEX" }, { path: "htn-hbpm-discharge.json", sha256: "HUMAN_FILL_64HEX" } ], member_count: 7 }
+        - { id: cgat, kind: cgat-matrix,             path: "work/HUMAN_FILL_RUN_ID/docs/cgat-matrix.md", canonicalization: nfc-trailing-newline-then-sha256, sha256: "HUMAN_FILL_64HEX", file_list: [], member_count: null }
+        - { id: comm, kind: communication-resource,  path: "work/HUMAN_FILL_RUN_ID/fhir/Communication/htn-2025-supersedes-2017.json", canonicalization: jcs-rfc8785-then-sha256, sha256: "HUMAN_FILL_64HEX", file_list: [], member_count: null }
+        - { id: cov,  kind: coverage-report-set,     path: "work/HUMAN_FILL_RUN_ID/cql/coverage/", canonicalization: file-list-jcs-then-sha256,               sha256: "HUMAN_FILL_64HEX", file_list: [ { path: "HBPStaging.json", sha256: "HUMAN_FILL_64HEX" } ], member_count: 9 }
+        - { id: cpr,  kind: copyright-report,        path: "work/HUMAN_FILL_RUN_ID/reports/copyright-HUMAN_FILL_RUN_ID.md", canonicalization: nfc-trailing-newline-then-sha256, sha256: "HUMAN_FILL_64HEX", file_list: [], member_count: null }
+        - { id: cql,  kind: cql-library-set,         path: "work/HUMAN_FILL_RUN_ID/cql/", canonicalization: file-list-jcs-then-sha256,                       sha256: "HUMAN_FILL_64HEX", file_list: [ { path: "lib-HUMAN_FILL_16HEX/HBPStaging.cql", sha256: "HUMAN_FILL_64HEX" } ], member_count: 9 }
+        - { id: g1,   kind: gate1-register-set,      path: "work/HUMAN_FILL_RUN_ID/gate1/", canonicalization: file-list-jcs-then-sha256,                     sha256: "HUMAN_FILL_64HEX", file_list: [ { path: "cohort-HUMAN_FILL_16HEX.signed.jsonld", sha256: "HUMAN_FILL_64HEX" } ], member_count: 1 }
+        - { id: g2,   kind: gate2-register-set,      path: "work/HUMAN_FILL_RUN_ID/gate2/", canonicalization: file-list-jcs-then-sha256,                     sha256: "HUMAN_FILL_64HEX", file_list: [ { path: "cohort-HUMAN_FILL_16HEX.signed.jsonld", sha256: "HUMAN_FILL_64HEX" } ], member_count: 1 }
+        - { id: ig,   kind: ig-build,                path: "work/HUMAN_FILL_RUN_ID/ig/", canonicalization: file-list-jcs-then-sha256,                       sha256: "HUMAN_FILL_64HEX", file_list: [ { path: "ImplementationGuide-cpg-htn-2025-acc-aha.json", sha256: "HUMAN_FILL_64HEX" } ], member_count: 0 }
+        - { id: mfst, kind: manifest,                path: "manifests/v1.0.0+ACC-AHA-2025+US+HUMAN_FILL_DATE.yaml", canonicalization: jcs-rfc8785-then-sha256, sha256: "HUMAN_FILL_64HEX", file_list: [], member_count: null }
+        - { id: phi,  kind: phi-report,              path: "work/HUMAN_FILL_RUN_ID/reports/phi-HUMAN_FILL_RUN_ID.md", canonicalization: nfc-trailing-newline-then-sha256, sha256: "HUMAN_FILL_64HEX", file_list: [], member_count: null }
+        - { id: prov, kind: prov-bundle,             path: "provenance/flow-HUMAN_FILL_RUN_ID.jsonld", canonicalization: jcs-rfc8785-then-sha256,             sha256: "HUMAN_FILL_64HEX", file_list: [], member_count: null }
+        - { id: recs, kind: records,                 path: "work/HUMAN_FILL_RUN_ID/records.json", canonicalization: jcs-rfc8785-then-sha256,                 sha256: "HUMAN_FILL_64HEX", file_list: [], member_count: null }
+        - { id: rtm,  kind: regulatory-traceability, path: "work/HUMAN_FILL_RUN_ID/docs/regulatory-traceability.md", canonicalization: nfc-trailing-newline-then-sha256, sha256: "HUMAN_FILL_64HEX", file_list: [], member_count: null }
+        - { id: safe, kind: safety-case,             path: "work/HUMAN_FILL_RUN_ID/safety/safety-case.signed.jsonld", canonicalization: jcs-rfc8785-then-sha256, sha256: "HUMAN_FILL_64HEX", file_list: [], member_count: null }
+        - { id: sair, kind: sair,                    path: "work/HUMAN_FILL_RUN_ID/sair.json", canonicalization: jcs-rfc8785-then-sha256,                    sha256: "HUMAN_FILL_64HEX", file_list: [], member_count: null }
+
+    bundle_sha256: "HUMAN_FILL_64HEX"
+
+    attesters:
+      - attester_id: "rev-HUMAN_FILL_16HEX"
+        legal_name: "HUMAN_FILL: medical director legal name"
+        preferred_credential_string: "HUMAN_FILL"
+        role: medical-director
+        institution: "HUMAN_FILL"
+        identity_proof:
+          ial: IAL3
+          aal: AAL3
+          proofing_method: "HUMAN_FILL: institutional IAL3 proofing description"
+          proofing_evidence_uri: "https://HUMAN_FILL/director-proof"
+          proofed_at: "HUMAN_FILL_ISO_DATETIME"
+          proofed_by_org: "HUMAN_FILL"
+          proofed_by_person: null
+        credentials:
+          - kind: medical-director
+            issuer: "HUMAN_FILL"
+            evidence_uri: "https://HUMAN_FILL/director-credential"
+            valid_from: "HUMAN_FILL_ISO_DATE"
+            valid_until: null
+            verified_at: "HUMAN_FILL_ISO_DATETIME"
+            verified_by: "HUMAN_FILL"
+        coi_disclosures:
+          - kind: none
+            counterparty: null
+            scope: none
+            scope_detail: null
+            disclosed_at: "HUMAN_FILL_ISO_DATETIME"
+            mitigation: null
+            auto_disqualifies_build: false
+        public_key:
+          algorithm: Ed25519
+          key_id: "HUMAN_FILL"
+          key_pem: "HUMAN_FILL"
+          fingerprint_sha256: "HUMAN_FILL_64HEX"
+        added_to_attestation_at: "HUMAN_FILL_ISO_DATETIME"
+
+    attestations:
+      - attestation_entry_id: "att-HUMAN_FILL_16HEX"
+        attester_id: "rev-HUMAN_FILL_16HEX"
+        role: medical-director
+        bundle_sha256: "HUMAN_FILL_64HEX"
+        manifest_payload_sha256_at_signoff: "HUMAN_FILL_64HEX"
+        decision: attest
+        acknowledgements:
+          bundle_integrity_attested: true
+          gate1_finalization_acknowledged: true
+          gate2_finalization_acknowledged: true
+          hazards_and_mitigations_acknowledged: true
+          intended_use_boundary_acknowledged: true
+          phi_clean_attested: true
+          copyright_envelope_attested: true
+          ig_validator_clean_attested: true
+          pregnancy_order_select_hardrefuse_attested: true
+          supersession_communication_present_attested: true
+        decline_reason: null
+        rationale: |
+          HUMAN_FILL: e.g., "All Gate-1 and Gate-2 cohorts finalized.
+          Hazards H-01..H-10 mitigated and acknowledged. Pregnancy
+          denylist verified as `order-select` hard refusal. PHI scrub
+          clean. Quote envelope within publisher contract caps. IG
+          builds clean under HL7 Validator. Supersession Communication
+          present and wired."
+        coi_attestation_at_signoff:
+          no_undisclosed_coi: true
+          applicable_coi_kinds: []
+        session_attestations:
+          reviewed_bundle_integrity_pane: true
+          reviewed_gate1_summary_pane: true
+          reviewed_gate2_summary_pane: true
+          reviewed_hazard_log_and_safety_case_pane: true
+          reviewed_phi_pane: true
+          reviewed_copyright_pane: true
+          reviewed_ig_validator_pane: true
+          reviewed_cds_hooks_wiring_pane: true
+          reviewed_supersession_pane: true
+          reviewed_documentation_pane: true
+          reviewed_intended_use_pane: true
+        signed_at: "HUMAN_FILL_ISO_DATETIME"
+        signature:
+          algorithm: Ed25519
+          key_id: "HUMAN_FILL"
+          payload_canonical_form: json-canonical-rfc8785
+          payload_sha256: "HUMAN_FILL_64HEX"
+          signature_b64: "HUMAN_FILL_BASE64"
+          time_stamp:
+            tsa_name: "HUMAN_FILL"
+            tsa_url: "https://HUMAN_FILL/tsa"
+            tsa_cert_fingerprint_sha256: "HUMAN_FILL_64HEX"
+            time: "HUMAN_FILL_ISO_DATETIME"
+            token_b64: "HUMAN_FILL_BASE64"
+          verifies: true
+
+    state: attested
+
+    audit_log:
+      - { event_id: "evt-HUMAN_FILL_16HEX", occurred_at: "HUMAN_FILL_ISO_DATETIME", kind: attestation-drafted, actor_id: "HUMAN_FILL", payload_sha256: "HUMAN_FILL_64HEX", prov_activity_id: "HUMAN_FILL" }
+      - { event_id: "evt-HUMAN_FILL_16HEX", occurred_at: "HUMAN_FILL_ISO_DATETIME", kind: bundle-recomputed,   actor_id: "HUMAN_FILL", payload_sha256: "HUMAN_FILL_64HEX", prov_activity_id: "HUMAN_FILL" }
+      - { event_id: "evt-HUMAN_FILL_16HEX", occurred_at: "HUMAN_FILL_ISO_DATETIME", kind: attest-recorded,     actor_id: "rev-HUMAN_FILL_16HEX", payload_sha256: "HUMAN_FILL_64HEX", prov_activity_id: "HUMAN_FILL" }
+
+    fixity:
+      attestation_sha256: "HUMAN_FILL_64HEX"
+      computed_at: "HUMAN_FILL_ISO_DATETIME"
+      canonical_form: json-canonical-rfc8785
+
+  # ---------------------------------------------------------------------------
+  # 6.2 Declined with reason `coverage-below-floor` (single-control)
+  # ---------------------------------------------------------------------------
+  - schema_version: "1.0.0"
+    attestation_id: "att-doc-HUMAN_FILL_16HEX"
+    attestation_version: "1.0.0"
+    predecessor_attestation_id: null
+    predecessor_attestation_state: null
+    guideline_manifest_ref: "guideline-manifest-hbp-2025.v1.0.0+ACC-AHA-2025+US+HUMAN_FILL_DATE.yaml"
+
+    build:
+      run_id: "HUMAN_FILL_UUID"
+      build_version_label: "v1.0.0+ACC-AHA-2025+US+HUMAN_FILL_ISO_DATE"
+      opened_at: "HUMAN_FILL_ISO_DATETIME"
+      attested_at: null
+      declined_at: "HUMAN_FILL_ISO_DATETIME"
+      escalated_to_board_at: null
+      first_publish: true
+
+    dual_control_required: false
+
+    bundle_manifest:
+      schema_version: "1.0.0"
+      build_run_id: "HUMAN_FILL_UUID"
+      manifest_version: "1.0.0"
+      members:
+        # Same 18-member set as 6.1, with `cov` reflecting a sub-floor library.
+        # Compact YAML for the second example; same shape as 6.1.
+        - { id: aus,  kind: atomic-units,            path: "...", canonicalization: jcs-rfc8785-then-sha256,           sha256: "HUMAN_FILL_64HEX", file_list: [], member_count: null }
+        - { id: card, kind: guideline-card,          path: "...", canonicalization: nfc-trailing-newline-then-sha256,  sha256: "HUMAN_FILL_64HEX", file_list: [], member_count: null }
+        - { id: cdsh, kind: cds-hooks-service-set,   path: "...", canonicalization: file-list-jcs-then-sha256,         sha256: "HUMAN_FILL_64HEX", file_list: [], member_count: 7 }
+        - { id: cgat, kind: cgat-matrix,             path: "...", canonicalization: nfc-trailing-newline-then-sha256,  sha256: "HUMAN_FILL_64HEX", file_list: [], member_count: null }
+        - { id: comm, kind: communication-resource,  path: "...", canonicalization: jcs-rfc8785-then-sha256,           sha256: "HUMAN_FILL_64HEX", file_list: [], member_count: null }
+        - { id: cov,  kind: coverage-report-set,     path: "...", canonicalization: file-list-jcs-then-sha256,         sha256: "HUMAN_FILL_64HEX", file_list: [], member_count: 9 }
+        - { id: cpr,  kind: copyright-report,        path: "...", canonicalization: nfc-trailing-newline-then-sha256,  sha256: "HUMAN_FILL_64HEX", file_list: [], member_count: null }
+        - { id: cql,  kind: cql-library-set,         path: "...", canonicalization: file-list-jcs-then-sha256,         sha256: "HUMAN_FILL_64HEX", file_list: [], member_count: 9 }
+        - { id: g1,   kind: gate1-register-set,      path: "...", canonicalization: file-list-jcs-then-sha256,         sha256: "HUMAN_FILL_64HEX", file_list: [], member_count: 1 }
+        - { id: g2,   kind: gate2-register-set,      path: "...", canonicalization: file-list-jcs-then-sha256,         sha256: "HUMAN_FILL_64HEX", file_list: [], member_count: 1 }
+        - { id: ig,   kind: ig-build,                path: "...", canonicalization: file-list-jcs-then-sha256,         sha256: "HUMAN_FILL_64HEX", file_list: [], member_count: 0 }
+        - { id: mfst, kind: manifest,                path: "...", canonicalization: jcs-rfc8785-then-sha256,           sha256: "HUMAN_FILL_64HEX", file_list: [], member_count: null }
+        - { id: phi,  kind: phi-report,              path: "...", canonicalization: nfc-trailing-newline-then-sha256,  sha256: "HUMAN_FILL_64HEX", file_list: [], member_count: null }
+        - { id: prov, kind: prov-bundle,             path: "...", canonicalization: jcs-rfc8785-then-sha256,           sha256: "HUMAN_FILL_64HEX", file_list: [], member_count: null }
+        - { id: recs, kind: records,                 path: "...", canonicalization: jcs-rfc8785-then-sha256,           sha256: "HUMAN_FILL_64HEX", file_list: [], member_count: null }
+        - { id: rtm,  kind: regulatory-traceability, path: "...", canonicalization: nfc-trailing-newline-then-sha256,  sha256: "HUMAN_FILL_64HEX", file_list: [], member_count: null }
+        - { id: safe, kind: safety-case,             path: "...", canonicalization: jcs-rfc8785-then-sha256,           sha256: "HUMAN_FILL_64HEX", file_list: [], member_count: null }
+        - { id: sair, kind: sair,                    path: "...", canonicalization: jcs

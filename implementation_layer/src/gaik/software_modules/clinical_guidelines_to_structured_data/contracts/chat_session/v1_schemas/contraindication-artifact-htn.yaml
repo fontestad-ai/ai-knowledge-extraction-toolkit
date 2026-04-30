@@ -1,0 +1,1688 @@
+# =============================================================================
+# contraindication-artifact-htn.yaml
+# -----------------------------------------------------------------------------
+# Standalone schema for the per-run cross-check artifact produced by
+# `extract-contraindications` at Phase 14 (P14) and consumed by:
+#   - `safety-hbp` at Phase 23 (mitigations bind to Evidence.id /
+#     EvidenceVariable.id materialized from artifact rows whose
+#     overall == "pass")
+#   - `safety-case-attest` at Gate 3 (the artifact's
+#     cross_check_sha256 is part of the build's evidence chain)
+#   - `cds-hooks-package-htn` at Phase 22 (descriptor metadata cites
+#     EvidenceVariable.id values from artifact rows)
+#   - `fhir-implementation-guide-build` at Phase 26 (composes the
+#     materialized FHIR R5 Evidence / EvidenceVariable resources into
+#     the published IG)
+#
+# This file is the contract for:
+#   - The closed cross-check kind set (the four mandatory checks
+#     plus pregnancy reinforcement and PCE-legacy scan).
+#   - The closed AuditEventKind enum (mirrored from
+#     `extract-contraindications` SKILL §6.1).
+#   - The pregnancy-denylist-specific reinforcement block (mirrored
+#     from `cds-hooks-services-htn.yaml` §3.7 and
+#     `pharm-rule-htn.yaml` §2.7 AttendingOverridePattern).
+#   - The closed AttendingOverridePattern denylist as a schema-level
+#     invariant on every artifact's free-text fields.
+#   - The categorical rejection of pregnancy-denylist held rules at
+#     the artifact layer (mirrors `PR-INV-21`).
+#   - The FHIR R5 Evidence + EvidenceVariable artifact-row shape with
+#     deterministic id derivation.
+#   - The cross-check artifact-level fixity-manifest shape (RFC 8785
+#     JCS canonicalization; SHA-256 over canonical bytes).
+#   - The post-Gate-2-reference immutability rules (artifacts whose
+#     Evidence.id is referenced by a Gate-2-finalized Library are
+#     immutable; corrections require coordinated re-extract through
+#     P13 + P14 + P20 + Gate 2).
+#
+# Posture: caution over velocity, fidelity over coverage,
+# hard-refusal-on-pregnancy over convenience. Cross-check failure on
+# any of the four mandatory checks routes the rule to held; pregnancy
+# denylist reinforcement failure or AttendingOverridePattern detection
+# or PCE-legacy literal detection BLOCKs unconditionally. The skill
+# never auto-resolves blocked rows.
+#
+# This file does NOT contain CQL bytes, RxNorm content, FHIR profile
+# bytes, or terminology-server endpoints. It is the cross-check-layer
+# contract between Gate-1-finalized records / atomic units / pharm
+# rules and the downstream Safety Case / CDS Hooks / IG build phases.
+#
+# Authority:
+#   - ADR-HTN-001 D2 (single authoritative source)
+#   - ADR-HTN-001 D3 (native ACC/AHA grading preserved as primary)
+#   - ADR-HTN-001 D5 (PREVENT canonical)
+#   - ADR-HTN-001 D8 (pregnancy hard-block enforced at order-select)
+#   - ADR-HTN-001 D9 (three non-overridable human gates; this schema
+#     is gated by Gate 1 upstream and feeds Gate 2 / Gate 3 downstream)
+#   - ADR-HTN-001 D10 (PHI fail-closed; the artifact carries no
+#     patient-identifying content)
+#   - ADR-HTN-001 D11 (Synthea-only test data; the FHIR resources the
+#     artifact references are the surface that P21 tests under
+#     Synthea cohorts)
+#   - ADR-HTN-001 D14 (predecessor 2017 advisory)
+#   - ADR-HTN-001 D15 (drift detection; RxNorm subset drift is
+#     checked at every re-run)
+#   - Framework spec §3 (pipeline; P14 placement)
+#   - Framework spec §5 (skills; this schema's writer is
+#     `extract-contraindications`)
+#   - Framework spec §11 (Guideline Card / NAM CGAT; downstream
+#     consumers)
+#   - `extract-contraindications` SKILL.md (the only authorized writer)
+#   - Parent framework rules: `god-session`, `human-authorization`,
+#     `native-ux-tools`
+#
+# Relationship to neighboring schemas (separate files, referenced by
+# $ref or by content-hash pointer):
+#   - schemas/recommendation-record-htn.yaml  (input; INV-09, INV-10)
+#   - schemas/atomic-unit.yaml                (input; AU-INV-22..25)
+#   - schemas/sair.yaml                       (input; recbox cell shape
+#                                              for cross-check 3)
+#   - schemas/acc-aha-grading.yaml            (closed COR/LOE enums for
+#                                              cross-check 3)
+#   - schemas/gate1-register.yaml             (finalization preconditions
+#                                              and closed EditTarget set;
+#                                              panel-chair escalation
+#                                              concern categories)
+#   - schemas/pharm-rule-htn.yaml             (input; PR-INV-05,
+#                                              PR-INV-13..16, PR-INV-18..21)
+#   - schemas/cds-hooks-services-htn.yaml     (downstream consumer; §2.5
+#                                              AttendingOverridePattern
+#                                              mirrored here)
+#   - schemas/safety-case-htn.yaml            (downstream consumer;
+#                                              SC-INV-09, SC-INV-10,
+#                                              SC-INV-26, SC-INV-27)
+#   - schemas/gate3-attestation.yaml          (downstream consumer;
+#                                              cross_check_sha256 is part
+#                                              of the IG bundle's
+#                                              evidence chain)
+#   - schemas/guideline-manifest-hbp-2025.yaml (per-build manifest;
+#                                              terminology[] (RxNorm
+#                                              edition), risk_engine,
+#                                              intended_use.age_min_
+#                                              inclusive, pregnancy
+#                                              value-set id, FHIR R5
+#                                              profile pin, tsa_list
+#                                              are consulted)
+# =============================================================================
+
+$schema: "https://json-schema.org/draft/2020-12/schema"
+$id: "https://aiwg.io/cpg-htn-2025-acc-aha/schemas/contraindication-artifact-htn.yaml"
+title: "ContraindicationArtifactHTN"
+description: >
+  Auditable, deterministic-id-bound, RFC-8785-canonical contract for
+  the per-run cross-check artifact produced by
+  `extract-contraindications`. Encodes the closed cross-check kind
+  set, the closed AuditEventKind enum, the pregnancy-denylist-
+  specific reinforcement block, the closed AttendingOverridePattern
+  denylist as a schema-level invariant, the categorical rejection
+  of pregnancy-denylist held rules, the FHIR R5 Evidence +
+  EvidenceVariable artifact-row shape with deterministic id
+  derivation, the artifact-level fixity-manifest, and the
+  post-Gate-2-reference immutability rules.
+version: "1.0.0"
+schema_lifecycle: stable
+last_reviewed: "HUMAN_FILL: ISO-8601 date of most recent panel review of this schema"
+authority:
+  adr: ADR-HTN-001
+  framework: cpg-htn-2025-acc-aha
+  parent_framework: aiwg-training
+license: MIT
+
+# -----------------------------------------------------------------------------
+# 1. POLICY (normative)
+# -----------------------------------------------------------------------------
+
+policy:
+
+  closed_cross_check_kind_set:
+    rule: >
+      Every artifact-row MUST record exactly the four mandatory
+      cross-checks (CC1: rule ↔ record INV-09; CC2: rule ↔
+      atomic-unit anchor; CC3: rule ↔ recbox cell shape; CC4: rule
+      ↔ RxNorm subset) plus the conditional pregnancy reinforcement
+      and the unconditional PCE-legacy scan. The set is closed at
+      the schema level; new checks require ADR-HTN-001 amendment.
+      Validators MUST refuse rows missing any of the four mandatory
+      checks or carrying additional checks not in §2.1.
+
+  rule_scope_is_denylist_advanced:
+    rule: >
+      Every artifact-row MUST reference a `PharmRule` whose
+      `kind == "denylist"` AND whose `agreement.state == "agreed"`
+      AND whose `state == "advanced"` (or `sealed`/`superseded` in
+      historical rule sets). Held denylist rules MUST NOT be
+      referenced under any circumstance; pregnancy-denylist held
+      rules are categorically forbidden (mirrors `PR-INV-21`).
+      Validators MUST refuse any artifact-row referencing a
+      held-state rule.
+
+  pregnancy_denylist_categorical_rejection:
+    rule: >
+      An artifact-row whose referenced rule has
+      `population_filter[]` containing `pregnant` or `postpartum`
+      AND `agreement.state != "agreed"` MUST be refused at
+      validation time. The schema enforces this with
+      `CIA-INV-09`. The skill enforces this at preflight; the
+      schema is the second defense.
+
+  pregnancy_denylist_reinforcement_block:
+    rule: >
+      An artifact-row whose referenced rule's
+      `population_filter[]` includes `pregnant` or `postpartum` AND
+      `kind == "denylist"` MUST satisfy ALL of the following
+      (PregnancyReinforcementConstraints, mirrored from
+      `cds-hooks-services-htn.yaml` §3.7 and adapted to the
+      cross-check-artifact layer):
+        a) referenced rule's `posture_at_cds == "hard-refuse"`
+        b) referenced rule's `cds_hook == "order-select"`
+        c) referenced rule's `attending_override_permitted == false`
+        d) referenced rule's `documentation_only == false`
+        e) referenced rule's `indicator_set == ["critical"]`
+        f) the artifact-row's `pregnancy_reinforcement.status == "pass"`
+           AND `pregnancy_reinforcement.attending_override_pattern_scan_clean
+           == true`
+        g) the materialized `EvidenceVariable.useContext[]` includes
+           the manifest-pinned pregnancy value-set id (recorded in
+           `pregnancy_reinforcement.pregnancy_value_set_id_present
+           == true`)
+        h) NO key or string value anywhere in the artifact-row's
+           `notes`, `held_remediation_hint`, or any
+           `failure_diagnostic.*` text fields (case-insensitive
+           after Unicode NFC) matches any AttendingOverridePattern
+           from §2.6
+      Any violation BLOCKs the artifact and emits the corresponding
+      closed audit event from §2.7.
+
+  attending_override_denylist:
+    rule: >
+      Every artifact-row MUST be free of attending-override
+      semantics in its free-text fields. Validators MUST recursively
+      scan every string value in `notes`, `held_remediation_hint`,
+      and any `failure_diagnostic.*` text fields (case-insensitive
+      after Unicode NFC) for any AttendingOverridePattern from §2.6.
+      Any match BLOCKs and emits an
+      `attending-override-pattern-detected` audit event. The
+      pattern set is closed; new patterns require ADR-HTN-001
+      amendment.
+
+  pce_legacy_never_appears:
+    rule: >
+      No artifact-row may reference `PCE-legacy` in any field,
+      including `notes`, `held_remediation_hint`, any
+      `failure_diagnostic.*` text fields, or any materialized FHIR
+      resource path / id / extension URL. PREVENT is canonical per
+      ADR-HTN-001 D5; any PCE-legacy reference is a release blocker.
+
+  inheritance_from_parent_rule:
+    rule: >
+      Every artifact-row MUST inherit `acc_aha_cor`, `acc_aha_loe`,
+      `parent_record_id`, `parent_atomic_unit_id`, and
+      `gate1_cohort_id` from the referenced PharmRule (read-only;
+      the artifact-row cannot relax COR or LOE). Mismatches between
+      artifact-row fields and rule fields are a release blocker.
+
+  age_gate_eq_18:
+    rule: >
+      Every artifact-row's parent record's `pico_precheck.populations[]`
+      MUST be compatible with the manifest's
+      `intended_use.age_min_inclusive == 18`. Pediatric populations
+      are out of scope and rejected at the artifact layer.
+
+  rxnorm_pin_alignment_and_drift_detection:
+    rule: >
+      Every artifact-row's `cross_check_4_rxnorm_subset.subset_sha256`
+      MUST equal the upstream P10 binding's recorded subset SHA-256
+      AND the referenced rule's recorded resolution at P13. Drift
+      between any two of these three sources BLOCKs and emits
+      `cross-check-4-rxnorm-subset-drift`.
+
+  fhir_r5_profile_compliance:
+    rule: >
+      Every materialized FHIR R5 Evidence and EvidenceVariable
+      resource path MUST refer to a file that validates against the
+      manifest-pinned FHIR R5 profile. Profile drift is a release
+      blocker. Resource SHAs MUST recompute byte-for-byte under FHIR
+      R5 JCS canonicalization (RFC 8785 with FHIR-specific element
+      ordering exceptions per `docs/fhir-r5-jcs-notes.md`).
+
+  deterministic_id_derivation:
+    rule: >
+      Every artifact-row's materialized resource ids MUST be
+      deterministic from the referenced rule_id:
+        - `Evidence.id` == `ev-cont-<rule_id>`
+        - `EvidenceVariable.id` == `ev-<rule_id>`
+      Re-runs against the same rule_id produce identical resource
+      ids; downstream consumers (P22, P23, P26, Gate 3) re-bind
+      without renumbering.
+
+  artifact_canonicalization:
+    rule: >
+      The artifact's `fixity.cross_check_sha256` MUST equal SHA-256
+      of the JCS-canonical (RFC 8785) form of THIS document with
+      `fixity` excluded. Validators recompute and compare; mismatch
+      is a release blocker.
+
+  audit_log_append_only:
+    rule: >
+      `audit_log[]` MUST be append-only and ordered by `occurred_at`.
+      Validators compute the chained hash of events; out-of-order or
+      missing events indicate tampering and are release blockers.
+
+  post_gate_2_reference_immutability:
+    rule: >
+      Once any artifact-row's `materialized.evidence_id` is
+      referenced by a Gate-2-finalized Library (the Library's
+      Gate-2 register entry records the citation), the artifact-row
+      becomes immutable. Mutation attempts are tamper-evident and
+      BLOCKed by SHA recompute. Corrections require coordinated
+      re-extract through P13 + P14 + P20 + Gate 2.
+
+  superseded_artifacts:
+    rule: >
+      An artifact whose underlying rule_set_sha256, records_sha256,
+      atomic_units_sha256, sair_sha256, or manifest_payload_sha256
+      changes is marked `state == "superseded"` with
+      `superseded_by_artifact_sha256` pointing to the new artifact.
+      The chain is monotone; cycles are forbidden.
+
+  conflict_routing_to_panel_chair:
+    rule: >
+      An artifact-row whose `overall == "blocked"` MUST cite a
+      closed concern category from §2.10 (mirrored from
+      `extract-recommendation-cor-loe` §8.2) and route the parent
+      record to `gate1-sme-review --mode chair-finalize`. The
+      schema records the routing in `blocked_routing.*` fields;
+      validators MUST refuse blocked rows that omit the routing.
+
+# -----------------------------------------------------------------------------
+# 2. CLOSED ENUMERATIONS
+# -----------------------------------------------------------------------------
+
+$defs:
+
+  # ---------------------------------------------------------------------------
+  # 2.1 Closed cross-check kinds
+  # ---------------------------------------------------------------------------
+  CrossCheckKind:
+    type: string
+    enum:
+      - cross-check-1-record-inv09
+      - cross-check-2-atomic-unit-anchor
+      - cross-check-3-recbox-cell-shape
+      - cross-check-4-rxnorm-subset
+      - pregnancy-reinforcement
+      - pce-legacy-scan
+
+  # ---------------------------------------------------------------------------
+  # 2.2 Per-check status
+  # ---------------------------------------------------------------------------
+  CrossCheckStatus:
+    type: string
+    enum:
+      - pass
+      - fail
+      - not-applicable
+    description: >
+      `not-applicable` is permitted ONLY for
+      `pregnancy-reinforcement` (when the referenced rule's
+      population_filter[] excludes pregnant and postpartum). All
+      four mandatory cross-checks AND `pce-legacy-scan` MUST be
+      `pass` or `fail`; `not-applicable` on any of these is a
+      release blocker.
+
+  # ---------------------------------------------------------------------------
+  # 2.3 Overall artifact-row status
+  # ---------------------------------------------------------------------------
+  OverallStatus:
+    type: string
+    enum:
+      - pass
+      - held
+      - blocked
+    description: >
+      - `pass`: all four mandatory checks pass; pregnancy
+        reinforcement (when applicable) passes; pce-legacy-scan
+        passes. The materialized FHIR resources are written.
+      - `held`: at least one mandatory check fails AND the failure
+        is recoverable upstream (e.g., recbox cell mismatch from a
+        P6 corruption); routes to the two-person-rule queue.
+        Pregnancy denylist rows MUST NOT enter `held` (mirrors
+        `PR-INV-21`); they are categorically rejected at preflight.
+      - `blocked`: at least one failure is a clinical safety
+        violation (pregnancy reinforcement failure,
+        AttendingOverridePattern detection, PCE-legacy literal);
+        routes the parent record to panel-chair re-review under
+        `gate1-sme-review --mode chair-finalize`.
+
+  # ---------------------------------------------------------------------------
+  # 2.4 Pharm-rule kind (closed; mirrored from pharm-rule-htn.yaml)
+  # ---------------------------------------------------------------------------
+  PharmRuleKind:
+    type: string
+    enum:
+      - first-line-selection
+      - denylist
+      - dose-modifier
+      - monitoring
+      - discontinuation
+    description: >
+      An artifact-row's `referenced_rule.kind` MUST be `denylist`
+      (rule_scope_is_denylist_advanced); the schema permits the full
+      enum to ease validator code reuse, but `CIA-INV-02` enforces
+      `denylist`-only at the artifact layer.
+
+  # ---------------------------------------------------------------------------
+  # 2.5 Anchor kind (closed; mirrored)
+  # ---------------------------------------------------------------------------
+  AnchorKind:
+    type: string
+    enum:
+      - cor-i-anchor
+      - cor-iia-anchor
+      - cor-iib-anchor
+      - cor-iii-no-benefit-anchor
+      - cor-iii-harm-anchor
+      - explicit-should-not-anchor
+      - explicit-not-recommended-anchor
+
+  # ---------------------------------------------------------------------------
+  # 2.6 Closed AttendingOverridePattern denylist
+  # ---------------------------------------------------------------------------
+  # Mirrored verbatim from `cds-hooks-services-htn.yaml` §2.5 and
+  # `pharm-rule-htn.yaml` §2.7.
+  # Validators MUST recursively scan every string value in
+  # `notes`, `held_remediation_hint`, and any `failure_diagnostic.*`
+  # fields (case-insensitive after Unicode NFC) for any of these
+  # patterns. Matches BLOCK the artifact.
+  # ---------------------------------------------------------------------------
+  AttendingOverridePattern:
+    type: string
+    enum:
+      - permit_on_attending_override
+      - permitOnAttendingOverride
+      - attending_override
+      - attendingOverride
+      - override_role
+      - overrideRole
+      - override_reason_required
+      - overrideReasonRequired
+      - attending_can_override
+      - attendingCanOverride
+      - override_with_attending_co_sign
+      - overrideWithAttendingCoSign
+      - permit_on_co_sign
+      - permitOnCoSign
+      - override_permitted
+      - overridePermitted
+      - suppressible
+      - suppressibleByRole
+      - documentationOnly
+      - documentation_only
+      - soft_warning
+      - softWarning
+
+  # ---------------------------------------------------------------------------
+  # 2.7 Closed AuditEventKind (mirrored from extract-contraindications §6.1)
+  # ---------------------------------------------------------------------------
+  AuditEventKind:
+    type: string
+    enum:
+      - cross-check-1-record-inv09-pass
+      - cross-check-1-record-inv09-mismatch
+      - cross-check-2-atomic-unit-anchor-pass
+      - cross-check-2-atomic-unit-anchor-mismatch
+      - cross-check-3-recbox-cell-pass
+      - cross-check-3-recbox-cell-mismatch
+      - cross-check-4-rxnorm-subset-pass
+      - cross-check-4-rxnorm-subset-drift
+      - pregnancy-denylist-cross-check-pass
+      - pregnancy-denylist-cross-check-failed
+      - pregnancy-denylist-attending-override-pattern-detected
+      - pregnancy-denylist-held-rule-rejected
+      - pce-legacy-binding-detected
+      - evidence-variable-built
+      - evidence-built
+      - evidence-variable-verified
+      - evidence-verified
+      - cross-check-artifact-built
+      - cross-check-artifact-verified
+      - contraindication-artifact-mutation-attempt
+      - artifact-routed-to-queue
+      - artifact-routed-to-panel-chair
+      - attending-override-pattern-detected
+      - fhir-profile-validation-failed
+      - evidence-or-evidencevariable-sha-mismatch
+
+  # ---------------------------------------------------------------------------
+  # 2.8 ACC/AHA grading (mirrored)
+  # ---------------------------------------------------------------------------
+  AccAhaCOR:
+    type: string
+    enum: [I, IIa, IIb, III-No-Benefit, III-Harm]
+
+  AccAhaLOE:
+    type: string
+    enum: [A, B-R, B-NR, C-LD, C-EO]
+
+  # ---------------------------------------------------------------------------
+  # 2.9 PopulationFilter (closed; mirrored)
+  # ---------------------------------------------------------------------------
+  PopulationFilter:
+    type: string
+    enum:
+      - general-adult
+      - older-adult
+      - pregnant
+      - postpartum
+      - ckd
+      - t2dm
+      - hf-rEF
+      - hf-pEF
+      - cad
+      - post-stroke
+      - secondary-htn-suspected
+      - urgency
+      - emergency
+      - resistant-htn
+
+  # ---------------------------------------------------------------------------
+  # 2.10 PanelChairConcernCategory (mirrored from
+  #      extract-recommendation-cor-loe §8.2)
+  # ---------------------------------------------------------------------------
+  PanelChairConcernCategory:
+    type: string
+    enum:
+      - verbatim-text-disputed
+      - atomicity-state-disputed
+      - cor-loe-extraction-disputed
+      - predecessor-mapping-disputed
+      - pregnancy-population-misclassified
+      - rxnorm-subset-disputed
+      - recbox-cell-corrupted
+      - other-clinical-integrity-failure
+    description: >
+      Closed concern-category set for blocked rows. The artifact MUST
+      cite exactly one when routing the parent record to
+      `gate1-sme-review --mode chair-finalize`.
+
+  # ---------------------------------------------------------------------------
+  # 2.11 Lifecycle states
+  # ---------------------------------------------------------------------------
+  ArtifactRowState:
+    type: string
+    enum:
+      - pending
+      - pass
+      - held
+      - blocked
+      - superseded
+      - withdrawn
+
+  ArtifactState:
+    type: string
+    enum:
+      - draft
+      - sealed
+      - superseded
+      - withdrawn
+
+  # ---------------------------------------------------------------------------
+  # 2.12 Verification methods
+  # ---------------------------------------------------------------------------
+  VerificationMethod:
+    type: string
+    enum:
+      - record-inv09-anchor-match
+      - atomic-unit-anchor-match
+      - verbatim-roundtrip
+      - recbox-cell-shape-match
+      - recbox-cor-cell-equals-rule-cor
+      - recbox-loe-cell-equals-rule-loe
+      - recbox-recommendation-cell-equals-source-text
+      - rxnorm-resolution-non-empty
+      - rxnorm-subset-sha-match-upstream-p10
+      - rxnorm-subset-sha-match-rule-recorded
+      - pregnancy-reinforcement-pass
+      - attending-override-pattern-scan-clean
+      - pce-legacy-literal-scan-clean
+      - fhir-r5-profile-validation-pass
+      - canonical-sha-match
+
+# -----------------------------------------------------------------------------
+# 3. STRUCTURED TYPES
+# -----------------------------------------------------------------------------
+
+  # ---------------------------------------------------------------------------
+  # 3.1 ReferencedRule
+  # ---------------------------------------------------------------------------
+  ReferencedRule:
+    type: object
+    additionalProperties: false
+    required:
+      - rule_id
+      - rule_sha256
+      - kind
+      - parent_record_id
+      - parent_atomic_unit_id
+      - gate1_cohort_id
+      - acc_aha_cor
+      - acc_aha_loe
+      - anchor_kind
+      - population_filter
+      - posture_at_cds
+      - cds_hook
+      - attending_override_permitted
+      - documentation_only
+      - rxnorm_edition_pin
+      - rxnorm_subset_sha256_recorded
+      - bound_risk_engine_name
+    properties:
+      rule_id:
+        type: string
+        pattern: "^pr-[0-9a-f]{16}$"
+      rule_sha256:
+        type: string
+        pattern: "^[0-9a-f]{64}$"
+      kind:                       { $ref: "#/$defs/PharmRuleKind" }
+      parent_record_id:
+        type: string
+        pattern: "^rec-[0-9a-f]{16}$"
+      parent_atomic_unit_id:
+        type: string
+        pattern: "^au-[0-9a-f]{16}$"
+      gate1_cohort_id:
+        type: string
+        pattern: "^cohort-[0-9a-f]{16}$"
+      acc_aha_cor:                { $ref: "#/$defs/AccAhaCOR" }
+      acc_aha_loe:                { $ref: "#/$defs/AccAhaLOE" }
+      anchor_kind:                { $ref: "#/$defs/AnchorKind" }
+      population_filter:
+        type: array
+        minItems: 1
+        items: { $ref: "#/$defs/PopulationFilter" }
+      posture_at_cds:
+        type: string
+        enum: [hard-refuse, soft-warning, informational]
+      cds_hook:
+        type: string
+        enum: [order-select, patient-view, encounter-discharge]
+      attending_override_permitted:
+        type: boolean
+        const: false
+      documentation_only:
+        type: boolean
+        const: false
+      indicator_set:
+        type: array
+        minItems: 1
+        items: { type: string, enum: [info, warning, critical, hard-stop] }
+      rxnorm_edition_pin:
+        type: string
+        minLength: 1
+      rxnorm_subset_sha256_recorded:
+        type: string
+        pattern: "^[0-9a-f]{64}$"
+        description: >
+          The subset SHA recorded by the rule at P13. Validators
+          recompute against the upstream P10 binding's subset and
+          against the live terminology server.
+      bound_risk_engine_name:
+        type: string
+        const: PREVENT
+        description: >
+          The rule's bound risk engine. PCE-legacy is forbidden;
+          validators MUST refuse any value other than PREVENT
+          (pce_legacy_never_appears).
+
+  # ---------------------------------------------------------------------------
+  # 3.2 Per-cross-check shapes
+  # ---------------------------------------------------------------------------
+  FailureDiagnostic:
+    type: object
+    additionalProperties: false
+    required: [summary]
+    properties:
+      summary:
+        type: string
+        minLength: 1
+        description: >
+          Plain-text diagnostic. Validators MUST scan for
+          AttendingOverridePattern (attending_override_denylist) and
+          for the literal `PCE-legacy` (pce_legacy_never_appears).
+      llm_a_value:    { type: [string, "null"] }
+      llm_b_value:    { type: [string, "null"] }
+      record_value:   { type: [string, "null"] }
+      rule_value:     { type: [string, "null"] }
+      atomic_unit_value: { type: [string, "null"] }
+      recbox_cell_value: { type: [string, "null"] }
+      upstream_p10_value: { type: [string, "null"] }
+      live_terminology_value: { type: [string, "null"] }
+
+  CrossCheck1RecordInv09:
+    type: object
+    additionalProperties: false
+    required: [status, anchor_kind_rule, anchor_kind_record_inv09]
+    properties:
+      status:                       { $ref: "#/$defs/CrossCheckStatus" }
+      anchor_kind_rule:             { $ref: "#/$defs/AnchorKind" }
+      anchor_kind_record_inv09:     { $ref: "#/$defs/AnchorKind" }
+      record_acc_aha_cor:           { $ref: "#/$defs/AccAhaCOR" }
+      failure_diagnostic:
+        oneOf:
+          - $ref: "#/$defs/FailureDiagnostic"
+          - type: "null"
+
+  CrossCheck2AtomicUnitAnchor:
+    type: object
+    additionalProperties: false
+    required: [status, anchor_kind_rule, anchor_kind_atomic_unit, sair_sha256, page, bbox, verbatim_roundtrip_ok]
+    properties:
+      status:                       { $ref: "#/$defs/CrossCheckStatus" }
+      anchor_kind_rule:             { $ref: "#/$defs/AnchorKind" }
+      anchor_kind_atomic_unit:      { $ref: "#/$defs/AnchorKind" }
+      sair_sha256:                  { type: string, pattern: "^[0-9a-f]{64}$" }
+      page:                         { type: integer, minimum: 1 }
+      bbox:
+        type: object
+        additionalProperties: false
+        required: [x0, y0, x1, y1]
+        properties:
+          x0: { type: number }
+          y0: { type: number }
+          x1: { type: number }
+          y1: { type: number }
+      verbatim_roundtrip_ok:
+        type: boolean
+        description: >
+          True iff the rule's `source_text_verbatim` round-trips
+          byte-for-byte against the parent atomic unit's
+          `text_verbatim` after applying the rule's
+          `normalization_log[]` in reverse.
+      failure_diagnostic:
+        oneOf:
+          - $ref: "#/$defs/FailureDiagnostic"
+          - type: "null"
+
+  CrossCheck3RecboxCellShape:
+    type: object
+    additionalProperties: false
+    required:
+      - status
+      - canonical_shape_present
+      - cor_cell_equals_rule_cor
+      - loe_cell_equals_rule_loe
+      - recommendation_cell_equals_source_text
+    properties:
+      status:                                     { $ref: "#/$defs/CrossCheckStatus" }
+      canonical_shape_present:
+        type: boolean
+        description: >
+          True iff the SAIR's `recommendation_box.row.cells[]` for the
+          parent record's row carry the canonical ACC/AHA shape (COR,
+          LOE, Recommendation, Supportive Text, Citations).
+      cor_cell_equals_rule_cor:                   { type: boolean }
+      loe_cell_equals_rule_loe:                   { type: boolean }
+      recommendation_cell_equals_source_text:     { type: boolean }
+      failure_diagnostic:
+        oneOf:
+          - $ref: "#/$defs/FailureDiagnostic"
+          - type: "null"
+
+  CrossCheck4RxNormSubset:
+    type: object
+    additionalProperties: false
+    required:
+      - status
+      - subset_sha256
+      - subset_sha256_upstream_p10
+      - subset_sha256_rule_recorded
+      - subset_size
+      - rxnorm_edition_pin
+    properties:
+      status:                       { $ref: "#/$defs/CrossCheckStatus" }
+      subset_sha256:
+        type: string
+        pattern: "^[0-9a-f]{64}$"
+        description: SHA-256 of the live terminology server's resolution at validation time.
+      subset_sha256_upstream_p10:
+        type: string
+        pattern: "^[0-9a-f]{64}$"
+        description: SHA-256 of the upstream P10 binding's recorded subset.
+      subset_sha256_rule_recorded:
+        type: string
+        pattern: "^[0-9a-f]{64}$"
+        description: SHA-256 recorded by the rule at P13.
+      subset_size:
+        type: integer
+        minimum: 0
+        description: Cardinality of the resolved subset; 0 forces fail (the contraindication is unenforceable).
+      rxnorm_edition_pin:
+        type: string
+        minLength: 1
+      failure_diagnostic:
+        oneOf:
+          - $ref: "#/$defs/FailureDiagnostic"
+          - type: "null"
+
+  PregnancyReinforcement:
+    type: object
+    additionalProperties: false
+    required:
+      - applicability
+      - status
+      - posture_at_cds_ok
+      - cds_hook_ok
+      - attending_override_permitted_ok
+      - documentation_only_ok
+      - indicator_set_ok
+      - attending_override_pattern_scan_clean
+      - pregnancy_value_set_id_present
+    properties:
+      applicability:
+        type: string
+        enum: [applicable, not-applicable]
+        description: >
+          `applicable` iff the referenced rule's
+          `population_filter[]` includes `pregnant` or `postpartum`.
+          When `not-applicable`, the boolean flags MUST be set to
+          true (vacuous-truth) and `status` MUST be `not-applicable`.
+      status:                                       { $ref: "#/$defs/CrossCheckStatus" }
+      posture_at_cds_ok:                            { type: boolean }
+      cds_hook_ok:                                  { type: boolean }
+      attending_override_permitted_ok:              { type: boolean }
+      documentation_only_ok:                        { type: boolean }
+      indicator_set_ok:                             { type: boolean }
+      attending_override_pattern_scan_clean:        { type: boolean }
+      pregnancy_value_set_id_present:
+        type: boolean
+        description: >
+          True iff the materialized `EvidenceVariable.useContext[]`
+          includes the manifest-pinned pregnancy value-set id.
+      manifest_pregnancy_value_set_id:              { type: [string, "null"] }
+      failure_diagnostic:
+        oneOf:
+          - $ref: "#/$defs/FailureDiagnostic"
+          - type: "null"
+
+  PceLegacyScan:
+    type: object
+    additionalProperties: false
+    required: [status, fields_scanned, matches_count]
+    properties:
+      status:                       { $ref: "#/$defs/CrossCheckStatus" }
+      fields_scanned:
+        type: array
+        minItems: 1
+        items: { type: string }
+        description: >
+          The fields scanned for the literal `PCE-legacy` (e.g.,
+          rule.rationale, rule.clinical_consequence, rule.held_remediation_hint,
+          materialized.evidence_resource_path, materialized.evidence_variable_resource_path).
+      matches_count:
+        type: integer
+        minimum: 0
+      failure_diagnostic:
+        oneOf:
+          - $ref: "#/$defs/FailureDiagnostic"
+          - type: "null"
+
+  # ---------------------------------------------------------------------------
+  # 3.3 Materialized FHIR resources (per artifact-row)
+  # ---------------------------------------------------------------------------
+  MaterializedResources:
+    type: object
+    additionalProperties: false
+    required:
+      - evidence_id
+      - evidence_resource_path
+      - evidence_resource_sha256
+      - evidence_variable_id
+      - evidence_variable_resource_path
+      - evidence_variable_resource_sha256
+      - fhir_r5_profile_pin
+      - fhir_r5_profile_validation_status
+    properties:
+      evidence_id:
+        type: string
+        pattern: "^ev-cont-pr-[0-9a-f]{16}$"
+        description: Deterministic id; equals `ev-cont-<rule_id>`.
+      evidence_resource_path:
+        type: string
+        description: Relative path under work/<run_id>/contraindications/Evidence/.
+      evidence_resource_sha256:
+        type: string
+        pattern: "^[0-9a-f]{64}$"
+      evidence_variable_id:
+        type: string
+        pattern: "^ev-pr-[0-9a-f]{16}$"
+        description: Deterministic id; equals `ev-<rule_id>`.
+      evidence_variable_resource_path:
+        type: string
+      evidence_variable_resource_sha256:
+        type: string
+        pattern: "^[0-9a-f]{64}$"
+      fhir_r5_profile_pin:
+        type: string
+        minLength: 1
+      fhir_r5_profile_validation_status:
+        type: string
+        enum: [pass, fail, not-run]
+      hl7_certainty_rating_recorded:
+        type: [string, "null"]
+        description: >
+          The HL7 certainty rating mapped from the rule's `acc_aha_loe`
+          per the manifest-pinned mapping document
+          `docs/acc-aha-to-hl7-certainty.md`. Null when not yet
+          materialized.
+
+  # ---------------------------------------------------------------------------
+  # 3.4 Held / blocked routing
+  # ---------------------------------------------------------------------------
+  HeldRouting:
+    type: object
+    additionalProperties: false
+    required: [queue_path, queue_entry_sha256, two_person_rule_status, held_remediation_hint]
+    properties:
+      queue_path:
+        type: string
+        description: Relative path under work/<run_id>/queue/contraindications/.
+      queue_entry_sha256:
+        type: string
+        pattern: "^[0-9a-f]{64}$"
+      two_person_rule_status:
+        type: string
+        enum: [awaiting-resolver, awaiting-verifier, resolved, withdrawn]
+      held_remediation_hint:
+        type: string
+        minLength: 1
+        description: >
+          Plain-text remediation hint (e.g., "Re-run P10 binding;
+          re-run P13 extract; re-run P14 cross-check"). Validators
+          MUST scan for AttendingOverridePattern matches.
+
+  BlockedRouting:
+    type: object
+    additionalProperties: false
+    required:
+      - panel_chair_route
+      - concern_category
+      - parent_record_id_routed
+      - paused_downstream_phases
+    properties:
+      panel_chair_route:
+        type: string
+        const: gate1-sme-review --mode chair-finalize
+      concern_category:                 { $ref: "#/$defs/PanelChairConcernCategory" }
+      parent_record_id_routed:
+        type: string
+        pattern: "^rec-[0-9a-f]{16}$"
+      paused_downstream_phases:
+        type: array
+        items:
+          type: string
+          enum: [P15, P16, P20, P21, P22, P23, P26, gate-2, gate-3]
+      blocked_rationale:
+        type: [string, "null"]
+        description: >
+          Plain-text rationale. Validators MUST scan for
+          AttendingOverridePattern matches and PCE-legacy literals.
+
+  # ---------------------------------------------------------------------------
+  # 3.5 ArtifactRow (per-rule cross-check decision)
+  # ---------------------------------------------------------------------------
+  ArtifactRow:
+    type: object
+    additionalProperties: false
+    required:
+      - row_id
+      - referenced_rule
+      - acc_aha_cor
+      - acc_aha_loe
+      - parent_record_id
+      - parent_atomic_unit_id
+      - gate1_cohort_id
+      - cross_check_1_record_inv09
+      - cross_check_2_atomic_unit_anchor
+      - cross_check_3_recbox_cell_shape
+      - cross_check_4_rxnorm_subset
+      - pregnancy_reinforcement
+      - pce_legacy_scan
+      - methods_passed
+      - methods_failed
+      - overall
+      - state
+      - notes
+      - fixity
+    properties:
+      row_id:
+        type: string
+        pattern: "^cir-[0-9a-f]{16}$"
+        description: >
+          Deterministic id; truncated SHA-256 of the canonical tuple
+          `(rule_id, rule_sha256, manifest_payload_sha256)`.
+      referenced_rule:                  { $ref: "#/$defs/ReferencedRule" }
+      acc_aha_cor:                      { $ref: "#/$defs/AccAhaCOR" }
+      acc_aha_loe:                      { $ref: "#/$defs/AccAhaLOE" }
+      parent_record_id:
+        type: string
+        pattern: "^rec-[0-9a-f]{16}$"
+      parent_atomic_unit_id:
+        type: string
+        pattern: "^au-[0-9a-f]{16}$"
+      gate1_cohort_id:
+        type: string
+        pattern: "^cohort-[0-9a-f]{16}$"
+      cross_check_1_record_inv09:       { $ref: "#/$defs/CrossCheck1RecordInv09" }
+      cross_check_2_atomic_unit_anchor: { $ref: "#/$defs/CrossCheck2AtomicUnitAnchor" }
+      cross_check_3_recbox_cell_shape:  { $ref: "#/$defs/CrossCheck3RecboxCellShape" }
+      cross_check_4_rxnorm_subset:      { $ref: "#/$defs/CrossCheck4RxNormSubset" }
+      pregnancy_reinforcement:          { $ref: "#/$defs/PregnancyReinforcement" }
+      pce_legacy_scan:                  { $ref: "#/$defs/PceLegacyScan" }
+      methods_passed:
+        type: array
+        items: { $ref: "#/$defs/VerificationMethod" }
+      methods_failed:
+        type: array
+        items: { $ref: "#/$defs/VerificationMethod" }
+      materialized:
+        oneOf:
+          - $ref: "#/$defs/MaterializedResources"
+          - type: "null"
+        description: >
+          Non-null iff `overall == "pass"`. When `overall ∈ {held,
+          blocked}`, materialized is null and the FHIR resources are
+          NOT written.
+      held_routing:
+        oneOf:
+          - $ref: "#/$defs/HeldRouting"
+          - type: "null"
+        description: >
+          Non-null iff `overall == "held"`.
+      blocked_routing:
+        oneOf:
+          - $ref: "#/$defs/BlockedRouting"
+          - type: "null"
+        description: >
+          Non-null iff `overall == "blocked"`.
+      overall:                          { $ref: "#/$defs/OverallStatus" }
+      state:                            { $ref: "#/$defs/ArtifactRowState" }
+      notes:
+        type: string
+        description: >
+          Plain-text operator notes. Validators MUST scan for
+          AttendingOverridePattern matches (attending_override_denylist)
+          and PCE-legacy literals (pce_legacy_never_appears).
+      fixity:
+        type: object
+        additionalProperties: false
+        required: [row_sha256, computed_at, canonical_form]
+        properties:
+          row_sha256:
+            type: string
+            pattern: "^[0-9a-f]{64}$"
+            description: >
+              SHA-256 of the JCS-canonical form of the row with
+              `fixity` excluded.
+          computed_at:    { type: string, format: date-time }
+          canonical_form: { type: string, enum: [json-canonical-rfc8785] }
+
+  # ---------------------------------------------------------------------------
+  # 3.6 AuditEvent
+  # ---------------------------------------------------------------------------
+  AuditEvent:
+    type: object
+    additionalProperties: false
+    required: [event_id, occurred_at, kind, actor_id, payload_sha256]
+    properties:
+      event_id:        { type: string, pattern: "^evt-[0-9a-f]{16}$" }
+      occurred_at:     { type: string, format: date-time }
+      kind:            { $ref: "#/$defs/AuditEventKind" }
+      actor_id:        { type: string }
+      payload_sha256:  { type: string, pattern: "^[0-9a-f]{64}$" }
+      prov_activity_id:{ type: [string, "null"] }
+      row_id:          { type: [string, "null"], pattern: "^cir-[0-9a-f]{16}$|^null$" }
+
+# -----------------------------------------------------------------------------
+# 4. ROOT TYPE — ContraindicationArtifactHTN
+# -----------------------------------------------------------------------------
+type: object
+title: ContraindicationArtifactHTN
+additionalProperties: false
+required:
+  - schema_version
+  - artifact_id
+  - artifact_version
+  - guideline_manifest_ref
+  - build
+  - rows
+  - state
+  - audit_log
+  - fixity
+properties:
+
+  schema_version:
+    type: string
+    const: "1.0.0"
+
+  artifact_id:
+    type: string
+    pattern: "^cia-[0-9a-f]{16}$"
+    description: >
+      Stable, deterministic id (truncated SHA-256 of build_run_id +
+      manifest_payload_sha256 + pharm_rule_set_sha256 +
+      records_sha256 + atomic_units_sha256 + sair_sha256). Stable
+      across re-runs given identical inputs.
+
+  artifact_version:
+    type: string
+    pattern: "^[0-9]+\\.[0-9]+\\.[0-9]+$"
+
+  predecessor_artifact_sha256:
+    type: [string, "null"]
+    pattern: "^[0-9a-f]{64}$|^null$"
+
+  predecessor_artifact_state:
+    type: [string, "null"]
+    enum: [superseded, withdrawn, null]
+
+  guideline_manifest_ref:
+    type: string
+    description: Pointer to the active `schemas/guideline-manifest-hbp-2025.yaml` instance.
+
+  # ---------------------------------------------------------------------------
+  # 4.1 Build identity (input pinning)
+  # ---------------------------------------------------------------------------
+  build:
+    type: object
+    additionalProperties: false
+    required:
+      - run_id
+      - build_version_label
+      - opened_at
+      - manifest_payload_sha256
+      - pharm_rule_set_path
+      - pharm_rule_set_sha256
+      - records_path
+      - records_sha256
+      - atomic_units_path
+      - atomic_units_sha256
+      - sair_path
+      - sair_sha256
+      - terminology_bindings_path
+      - terminology_bindings_sha256
+      - gate1_register_paths
+      - gate1_register_sha256s
+      - rxnorm_edition_pin
+      - fhir_r5_profile_pin
+      - manifest_pregnancy_value_set_id
+    properties:
+      run_id:                       { type: string, format: uuid }
+      build_version_label:
+        type: string
+        pattern: "^v[0-9]+\\.[0-9]+\\.[0-9]+\\+ACC-AHA-2025\\+US\\+[0-9]{4}-[0-9]{2}-[0-9]{2}$"
+      opened_at:                    { type: string, format: date-time }
+      sealed_at:                    { type: [string, "null"], format: date-time }
+      manifest_payload_sha256:      { type: string, pattern: "^[0-9a-f]{64}$" }
+      pharm_rule_set_path:          { type: string }
+      pharm_rule_set_sha256:        { type: string, pattern: "^[0-9a-f]{64}$" }
+      records_path:                 { type: string }
+      records_sha256:               { type: string, pattern: "^[0-9a-f]{64}$" }
+      atomic_units_path:            { type: string }
+      atomic_units_sha256:          { type: string, pattern: "^[0-9a-f]{64}$" }
+      sair_path:                    { type: string }
+      sair_sha256:                  { type: string, pattern: "^[0-9a-f]{64}$" }
+      terminology_bindings_path:    { type: string }
+      terminology_bindings_sha256:  { type: string, pattern: "^[0-9a-f]{64}$" }
+      gate1_register_paths:
+        type: array
+        minItems: 1
+        items: { type: string }
+      gate1_register_sha256s:
+        type: array
+        minItems: 1
+        items: { type: string, pattern: "^[0-9a-f]{64}$" }
+      rxnorm_edition_pin:           { type: string, minLength: 1 }
+      fhir_r5_profile_pin:          { type: string, minLength: 1 }
+      manifest_pregnancy_value_set_id: { type: string, minLength: 1 }
+
+  # ---------------------------------------------------------------------------
+  # 4.2 Rows
+  # ---------------------------------------------------------------------------
+  rows:
+    type: array
+    minItems: 0
+    items: { $ref: "#/$defs/ArtifactRow" }
+    description: >
+      The artifact's per-rule cross-check rows. Validators MUST refuse
+      rows referencing held-state denylist rules (CIA-INV-09); rows
+      referencing pregnancy-denylist held rules are categorically
+      forbidden.
+
+  # ---------------------------------------------------------------------------
+  # 4.3 Lifecycle
+  # ---------------------------------------------------------------------------
+  state: { $ref: "#/$defs/ArtifactState" }
+
+  # ---------------------------------------------------------------------------
+  # 4.4 Audit log (append-only)
+  # ---------------------------------------------------------------------------
+  audit_log:
+    type: array
+    items: { $ref: "#/$defs/AuditEvent" }
+
+  # ---------------------------------------------------------------------------
+  # 4.5 Artifact-level fixity
+  # ---------------------------------------------------------------------------
+  fixity:
+    type: object
+    additionalProperties: false
+    required: [cross_check_sha256, computed_at, canonical_form]
+    properties:
+      cross_check_sha256:
+        type: string
+        pattern: "^[0-9a-f]{64}$"
+        description: >
+          SHA-256 of the JCS-canonical form of THIS document with
+          `fixity` excluded (artifact_canonicalization). Deterministic
+          across re-runs given identical inputs.
+      computed_at:    { type: string, format: date-time }
+      canonical_form: { type: string, enum: [json-canonical-rfc8785] }
+
+# -----------------------------------------------------------------------------
+# 5. CROSS-FIELD INVARIANTS (validators MUST enforce)
+# -----------------------------------------------------------------------------
+
+invariants:
+
+  - id: CIA-INV-01
+    description: >
+      Every ArtifactRow's `row_id` MUST be the deterministic
+      truncated SHA-256 of `(rule_id, rule_sha256,
+      manifest_payload_sha256)` (deterministic_id_derivation, applied
+      at the row layer). Validators recompute and compare; mismatch
+      is a release blocker.
+
+  - id: CIA-INV-02
+    description: >
+      Every ArtifactRow's `referenced_rule.kind` MUST be `denylist`
+      (rule_scope_is_denylist_advanced). Other kinds are out of scope
+      for this artifact.
+
+  - id: CIA-INV-03
+    description: >
+      Every ArtifactRow's `acc_aha_cor`, `acc_aha_loe`,
+      `parent_record_id`, `parent_atomic_unit_id`, and
+      `gate1_cohort_id` MUST equal the `referenced_rule`'s
+      corresponding fields exactly (inheritance_from_parent_rule).
+
+  - id: CIA-INV-04
+    description: >
+      Every ArtifactRow MUST record exactly the four mandatory
+      cross-checks plus pregnancy_reinforcement plus pce_legacy_scan
+      (closed_cross_check_kind_set). Missing or additional checks
+      are a release blocker.
+
+  - id: CIA-INV-05
+    description: >
+      Every ArtifactRow's per-check `status` for the four mandatory
+      cross-checks AND pce_legacy_scan MUST be `pass` or `fail`.
+      `not-applicable` on any of these is a release blocker.
+      `pregnancy_reinforcement.status` MAY be `not-applicable` ONLY
+      when `pregnancy_reinforcement.applicability == "not-applicable"`.
+
+  - id: CIA-INV-06
+    description: >
+      Every ArtifactRow's `overall` MUST be derived per:
+        - `pass` iff (CC1 == pass) AND (CC2 == pass) AND
+                     (CC3 == pass) AND (CC4 == pass) AND
+                     (pregnancy_reinforcement.status ∈ {pass,
+                     not-applicable}) AND (pce_legacy_scan.status ==
+                     pass).
+        - `blocked` iff (pregnancy_reinforcement.applicability ==
+                         applicable AND pregnancy_reinforcement.status
+                         == fail) OR (pce_legacy_scan.status == fail)
+                         OR (any AttendingOverridePattern match was
+                         detected on this row).
+        - `held` otherwise (at least one of CC1..CC4 == fail with no
+                         clinical-safety violation).
+      Validators MUST recompute `overall` and compare to the
+      recorded value; mismatch is a release blocker.
+
+  - id: CIA-INV-07
+    description: >
+      For every ArtifactRow:
+        - `overall == "pass"` -> `materialized` MUST be non-null AND
+          `held_routing` AND `blocked_routing` MUST be null.
+        - `overall == "held"` -> `held_routing` MUST be non-null AND
+          `materialized` AND `blocked_routing` MUST be null.
+        - `overall == "blocked"` -> `blocked_routing` MUST be non-null
+          AND `materialized` AND `held_routing` MUST be null.
+
+  - id: CIA-INV-08
+    description: >
+      Every ArtifactRow's `cross_check_1_record_inv09.anchor_kind_rule`
+      MUST equal `cross_check_1_record_inv09.anchor_kind_record_inv09`
+      AND MUST equal `referenced_rule.anchor_kind` AND MUST be a
+      member of the closed denylist anchor set
+      {`cor-iii-harm-anchor`, `cor-iii-no-benefit-anchor`,
+      `explicit-should-not-anchor`, `explicit-not-recommended-anchor`}.
+      Mismatch emits `cross-check-1-record-inv09-mismatch` and
+      BLOCKs.
+
+  - id: CIA-INV-09
+    description: >
+      No ArtifactRow may reference a `PharmRule` whose
+      `agreement.state != "agreed"`. Validators MUST resolve
+      `referenced_rule.rule_id` against the pinned
+      `build.pharm_rule_set_path` and refuse rows whose referenced
+      rule is `held` or `conflict`. Pregnancy-denylist held rules
+      are categorically forbidden (mirrors `PR-INV-21`); validators
+      MUST emit `pregnancy-denylist-held-rule-rejected` and refuse
+      such rows unconditionally
+      (pregnancy_denylist_categorical_rejection).
+
+  - id: CIA-INV-10
+    description: >
+      Every ArtifactRow's `cross_check_2_atomic_unit_anchor.sair_sha256`,
+      `.page`, `.bbox` MUST equal the parent atomic unit's anchor
+      values exactly AND MUST equal the referenced rule's `anchors.*`
+      values exactly. `verbatim_roundtrip_ok` MUST be true; false
+      forces CC2 to fail.
+
+  - id: CIA-INV-11
+    description: >
+      Every ArtifactRow's
+      `cross_check_3_recbox_cell_shape.canonical_shape_present` MUST
+      be true. The three boolean equality flags
+      (cor_cell_equals_rule_cor, loe_cell_equals_rule_loe,
+      recommendation_cell_equals_source_text) MUST all be true for
+      CC3 to pass; any false forces CC3 to fail.
+
+  - id: CIA-INV-12
+    description: >
+      Every ArtifactRow's
+      `cross_check_4_rxnorm_subset.subset_sha256_upstream_p10` MUST
+      equal `cross_check_4_rxnorm_subset.subset_sha256` AND MUST
+      equal `cross_check_4_rxnorm_subset.subset_sha256_rule_recorded`
+      (rxnorm_pin_alignment_and_drift_detection). Drift on any of the
+      three SHAs forces CC4 to fail and emits
+      `cross-check-4-rxnorm-subset-drift`.
+      Additionally, `subset_size > 0`; size 0 forces CC4 to fail
+      (the contraindication is unenforceable).
+      `rxnorm_edition_pin` MUST equal `referenced_rule.rxnorm_edition_pin`
+      AND `build.rxnorm_edition_pin`.
+
+  - id: CIA-INV-13
+    description: >
+      For every ArtifactRow whose
+      `referenced_rule.population_filter[]` includes `pregnant` or
+      `postpartum`, `pregnancy_reinforcement.applicability` MUST be
+      `applicable` AND ALL of the constraints in the
+      pregnancy_denylist_reinforcement_block policy clause (a..h)
+      MUST hold (pregnancy_reinforcement.status == pass). Any
+      violation BLOCKs and emits
+      `pregnancy-denylist-cross-check-failed`.
+
+  - id: CIA-INV-14
+    description: >
+      Validators MUST recursively scan every string value in every
+      ArtifactRow's `notes`,
+      `held_routing.held_remediation_hint`,
+      `blocked_routing.blocked_rationale`, every
+      `failure_diagnostic.summary`, and every
+      `failure_diagnostic.*` text field (case-insensitive after
+      Unicode NFC) for any AttendingOverridePattern from §2.6. Any
+      match forces `overall == "blocked"` and emits
+      `attending-override-pattern-detected`
+      (attending_override_denylist).
+
+  - id: CIA-INV-15
+    description: >
+      Validators MUST recursively scan every string value in every
+      ArtifactRow (including notes, held_remediation_hint,
+      blocked_rationale, every failure_diagnostic, every materialized
+      resource path, and every materialized id) for the literal
+      `PCE-legacy` (case-insensitive after Unicode NFC). Any match
+      forces `overall == "blocked"` and emits
+      `pce-legacy-binding-detected` (pce_legacy_never_appears).
+      `referenced_rule.bound_risk_engine_name` MUST equal `PREVENT`.
+
+  - id: CIA-INV-16
+    description: >
+      Every ArtifactRow's `methods_passed[]` and `methods_failed[]`
+      MUST be derivable from the per-check `status` fields under the
+      following mapping:
+        - CC1 pass -> methods_passed contains `record-inv09-anchor-match`
+        - CC2 pass -> methods_passed contains `atomic-unit-anchor-match`,
+                                              `verbatim-roundtrip`
+        - CC3 pass -> methods_passed contains `recbox-cell-shape-match`,
+                                              `recbox-cor-cell-equals-rule-cor`,
+                                              `recbox-loe-cell-equals-rule-loe`,
+                                              `recbox-recommendation-cell-equals-source-text`
+        - CC4 pass -> methods_passed contains `rxnorm-resolution-non-empty`,
+                                              `rxnorm-subset-sha-match-upstream-p10`,
+                                              `rxnorm-subset-sha-match-rule-recorded`
+        - pregnancy_reinforcement.status == pass
+                  -> methods_passed contains `pregnancy-reinforcement-pass`
+        - pce_legacy_scan.status == pass
+                  -> methods_passed contains `pce-legacy-literal-scan-clean`
+        - materialized.fhir_r5_profile_validation_status == pass
+                  -> methods_passed contains `fhir-r5-profile-validation-pass`
+      methods_failed[] MUST list the corresponding methods for failed
+      checks. Validators MUST recompute and compare.
+
+  - id: CIA-INV-17
+    description: >
+      Every ArtifactRow's `materialized.evidence_id` MUST equal
+      `ev-cont-<rule_id>` AND `materialized.evidence_variable_id` MUST
+      equal `ev-<rule_id>` (deterministic_id_derivation).
+      `materialized.evidence_resource_sha256` and
+      `materialized.evidence_variable_resource_sha256` MUST recompute
+      byte-for-byte under FHIR R5 JCS canonicalization at validation
+      time (fhir_r5_profile_compliance). Mismatch is a release
+      blocker.
+
+  - id: CIA-INV-18
+    description: >
+      Every ArtifactRow's `materialized.fhir_r5_profile_pin` MUST
+      equal `build.fhir_r5_profile_pin`. Profile drift between
+      packaging and validation is a release blocker.
+
+  - id: CIA-INV-19
+    description: >
+      Every ArtifactRow's `materialized.fhir_r5_profile_validation_status`
+      MUST be `pass` for `overall == "pass"`. `fail` or `not-run`
+      forces `overall != "pass"` and routes the row to held with
+      `fhir-profile-validation-failed`.
+
+  - id: CIA-INV-20
+    description: >
+      Every ArtifactRow's `fixity.row_sha256` MUST equal SHA-256 of
+      the JCS-canonical form of the row with `fixity` excluded.
+      Validators recompute and compare; mismatch is a release blocker.
+
+  - id: CIA-INV-21
+    description: >
+      Every ArtifactRow's `state` MUST be consistent with `overall`:
+        - state == "pending" implies overall is recorded but row is
+          not yet finalized (transient; not permitted in sealed
+          artifacts).
+        - state == "pass" iff overall == "pass".
+        - state == "held" iff overall == "held".
+        - state == "blocked" iff overall == "blocked".
+        - state ∈ {"superseded", "withdrawn"} are historical states.
+
+  - id: CIA-INV-22
+    description: >
+      For state == "sealed":
+        - Every row's state MUST be `pass`, `held`, `blocked`, or
+          `superseded` (NEVER `pending`).
+        - `fixity.cross_check_sha256` MUST equal SHA-256 of the
+          JCS-canonical form of the document with `fixity` excluded
+          (artifact_canonicalization).
+        - `audit_log[]` MUST contain a `cross-check-artifact-built`
+          event AND a `cross-check-artifact-verified` event.
+
+  - id: CIA-INV-23
+    description: >
+      For state == "draft":
+        - Rows MAY be in `pending`, `pass`, `held`, or `blocked`
+          state.
+        - Validators MUST refuse to transition to `sealed` while any
+          row is in `pending`.
+
+  - id: CIA-INV-24
+    description: >
+      `audit_log[]` MUST be append-only and ordered by `occurred_at`.
+      Validators compute the chained hash of events; out-of-order or
+      missing events indicate tampering and are release blockers
+      (audit_log_append_only).
+
+  - id: CIA-INV-25
+    description: >
+      `predecessor_artifact_sha256` MUST be set whenever this
+      artifact supersedes a prior one. The predecessor's recorded
+      state (in `predecessor_artifact_state`) MUST be `superseded` or
+      `withdrawn`. Cycles in the predecessor chain are a release
+      blocker (superseded_artifacts).
+
+  - id: CIA-INV-26
+    description: >
+      Once any `materialized.evidence_id` is referenced by a
+      Gate-2-finalized Library (recorded in the Library's Gate-2
+      register entry as a citation), the corresponding ArtifactRow
+      becomes immutable; mutation of the row's content or fixity is
+      a release blocker (post_gate_2_reference_immutability).
+      Validators MUST cross-resolve the Gate-2 register at validation
+      time and refuse mutations.
+
+  - id: CIA-INV-27
+    description: >
+      Every ArtifactRow whose `overall == "blocked"` MUST cite
+      `blocked_routing.concern_category` from the closed
+      PanelChairConcernCategory set in §2.10
+      (conflict_routing_to_panel_chair). Validators MUST refuse
+      blocked rows that omit the category or that route to any path
+      other than `gate1-sme-review --mode chair-finalize`.
+
+  - id: CIA-INV-28
+    description: >
+      Every ArtifactRow whose `overall == "held"` MUST cite
+      `held_routing.queue_path` and `held_routing.queue_entry_sha256`
+      AND the queue entry MUST exist on disk and validate against the
+      `parse-reconcile-queue` schema. Validators MUST resolve and
+      refuse rows whose held entries are missing.
+
+  - id: CIA-INV-29
+    description: >
+      Every ArtifactRow's parent record's
+      `pico_precheck.populations[]` MUST be compatible with the
+      manifest's `intended_use.age_min_inclusive == 18`
+      (age_gate_eq_18). Pediatric populations are out of scope and a
+      release blocker.
+
+  - id: CIA-INV-30
+    description: >
+      `build.manifest_payload_sha256` MUST equal the active
+      manifest's `fixity.manifest_sha256` at packaging time.
+      Manifest drift between packaging and validation is a release
+      blocker.
+
+  - id: CIA-INV-31
+    description: >
+      `build.pharm_rule_set_sha256` MUST equal the active
+      `pharm-rules.json`'s `fixity.rule_set_sha256` at packaging
+      time, AND the rule set MUST be in `state == "sealed"`. Drift
+      or non-sealed state is a release blocker.
+
+  - id: CIA-INV-32
+    description: >
+      Every ArtifactRow's
+      `cross_check_4_rxnorm_subset.rxnorm_edition_pin` MUST equal
+      `build.rxnorm_edition_pin` AND
+      `referenced_rule.rxnorm_edition_pin`. Mismatch BLOCKs.
+
+  - id: CIA-INV-33
+    description: >
+      `build.fhir_r5_profile_pin` MUST equal the manifest's pinned
+      FHIR R5 profile id at packaging time
+      (fhir_r5_profile_compliance). Drift is a release blocker.
+
+# =============================================================================
+# 6. WORKED EXAMPLES (shape-correctness fixtures)
+# -----------------------------------------------------------------------------
+# Two examples are provided:
+#   6.1 An ArtifactRow for a pregnancy denylist contraindication in
+#       `overall == "pass"` state (the most-restricted shape; serves
+#       as the reference fixture for §3.7 / CIA-INV-13).
+#   6.2 A ContraindicationArtifactHTN covering several rows across
+#       agreed pass, held, and blocked, in `state == "sealed"`.
+#
+# EVERY field whose value can ONLY come from a real Library snapshot,
+# real Gate-1 / Gate-2 cohort, real manifest, real KMS-bound chair, or
+# real build is marked `HUMAN_FILL` with explicit instructions. The
+# pipeline refuses to operate on documents containing `HUMAN_FILL`
+# tokens.
+# =============================================================================
+
+examples:
+
+  # ---------------------------------------------------------------------------
+  # 6.1 ArtifactRow — pregnancy denylist contraindication (pass)
+  # ---------------------------------------------------------------------------
+  - row_id: "cir-HUMAN_FILL_16HEX"
+    referenced_rule:
+      rule_id: "pr-HUMAN_FILL_16HEX"
+      rule_sha256: "HUMAN_FILL_64HEX"
+      kind: denylist
+      parent_record_id: "rec-HUMAN_FILL_16HEX"
+      parent_atomic_unit_id: "au-HUMAN_FILL_16HEX"
+      gate1_cohort_id: "cohort-HUMAN_FILL_16HEX"
+      acc_aha_cor: III-Harm
+      acc_aha_loe: B-NR
+      anchor_kind: cor-iii-harm-anchor
+      population_filter: [pregnant, postpartum]
+      posture_at_cds: hard-refuse
+      cds_hook: order-select
+      attending_override_permitted: false
+      documentation_only: false
+      indicator_set: [critical]
+      rxnorm_edition_pin: "HUMAN_FILL_RXNORM_EDITION"
+      rxnorm_subset_sha256_recorded: "HUMAN_FILL_64HEX"
+      bound_risk_engine_name: PREVENT
+    acc_aha_cor: III-Harm
+    acc_aha_loe: B-NR
+    parent_record_id: "rec-HUMAN_FILL_16HEX"
+    parent_atomic_unit_id: "au-HUMAN_FILL_16HEX"
+    gate1_cohort_id: "cohort-HUMAN_FILL_16HEX"
+    cross_check_1_record_inv09:
+      status: pass
+      anchor_kind_rule: cor-iii-harm-anchor
+      anchor_kind_record_inv09: cor-iii-harm-anchor
+      record_acc_aha_cor: III-Harm
+      failure_diagnostic: null
+    cross_check_2_atomic_unit_anchor:
+      status: pass
+      anchor_kind_rule: cor-iii-harm-anchor
+      anchor_kind_atomic_unit: cor-iii-harm-anchor
+      sair_sha256: "HUMAN_FILL_64HEX"
+      page: 12
+      bbox: { x0: 0, y0: 0, x1: 0, y1: 0 }
+      verbatim_roundtrip_ok: true
+      failure_diagnostic: null
+    cross_check_3_recbox_cell_shape:
+      status: pass
+      canonical_shape_present: true
+      cor_cell_equals_rule_cor: true
+      loe_cell_equals_rule_loe: true
+      recommendation_cell_equals_source_text: true
+      failure_diagnostic: null
+    cross_check_4_rxnorm_subset:
+      status: pass
+      subset_sha256: "HUMAN_FILL_64HEX"
+      subset_sha256_upstream_p10: "HUMAN_FILL_64HEX"
+      subset_sha256_rule_recorded: "HUMAN_FILL_64HEX"
+      subset_size: 4
+      rxnorm_edition_pin: "HUMAN_FILL_RXNORM_EDITION"
+      failure_diagnostic: null
+    pregnancy_reinforcement:
+      applicability: applicable
+      status: pass
+      posture_at_cds_ok: true
+      cds_hook_ok: true
+      attending_override_permitted_ok: true
+      documentation_only_ok: true
+      indicator_set_ok: true
+      attending_override_pattern_scan_clean: true
+      pregnancy_value_set_id_present: true
+      manifest_pregnancy_value_set_id: "HUMAN_FILL_PREGNANCY_VALUE_SET_ID"
+      failure_diagnostic: null
+    pce_legacy_scan:
+      status: pass
+      fields_scanned:
+        - referenced_rule.rationale
+        - referenced_rule.clinical_consequence
+        - referenced_rule.held_remediation_hint
+        - notes
+        - materialized.evidence_resource_path
+        - materialized.evidence_variable_resource_path
+      matches_count: 0
+      failure_diagnostic: null
+    methods_passed:
+      - record-inv09-anchor-match
+      - atomic-unit-anchor-match
+      - verbatim-roundtrip
+      - recbox-cell-shape-match
+      - recbox-cor-cell-equals-rule-cor
+      - recbox-loe-cell-equals-rule-loe
+      - recbox-recommendation-cell-equals-source-text
+      - rxnorm-resolution-non-empty
+      - rxnorm-subset-sha-match-upstream-p10
+      - rxnorm-subset-sha-match-rule-recorded
+      - pregnancy-reinforcement-pass
+      - attending-override-pattern-scan-clean
+      - pce-legacy-literal-scan-clean
+      - fhir-r5-profile-validation-pass
+      - canonical-sha-match
+    methods_failed: []
+    materialized:
+      evidence_id: "ev-cont-pr-HUMAN_FILL_16HEX"
+      evidence_resource_path: "work/HUMAN_FILL_RUN_ID/contraindications/Evidence/ev-cont-pr-HUMAN_FILL_16HEX.json"
+      evidence_resource_sha256: "HUMAN_FILL_64HEX"
+      evidence_variable_id: "ev-pr-HUMAN_FILL_16HEX"
+      evidence_variable_resource_path: "work/HUMAN_FILL_RUN_ID/contraindications/EvidenceVariable/ev-pr-HUMAN_FILL_16HEX.json"
+      evidence_variable_resource_sha256: "HUMAN_FILL_64HEX"
+      fhir_r5_profile_pin: "HUMAN_FILL_FHIR_R5_PROFILE_PIN"
+      fhir_r5_profile_validation_status: pass
+      hl7_certainty_rating_recorded: "HUMAN_FILL_HL7_CERTAINTY"
+    held_routing: null
+    blocked_routing: null
+    overall: pass
+    state: pass
+    notes: "HUMAN_FILL: operator notes; no AttendingOverridePattern; no PCE-legacy."
+    fixity:
+      row_sha256: "HUMAN_FILL_64HEX"
+      computed_at: "HUMAN_FILL_ISO_DATETIME"
+      canonical_form: json-canonical-rfc8785
+
+  # ---------------------------------------------------------------------------
+  # 6.2 ContraindicationArtifactHTN — sealed; mixed pass / held / blocked
+  # ---------------------------------------------------------------------------
+  - schema_version: "1.0.0"
+    artifact_id: "cia-HUMAN_FILL_16HEX"
+    artifact_version: "1.0.0"
+    predecessor_artifact_sha256: null
+    predecessor_artifact_state: null
+    guideline_manifest_ref: "guideline-manifest-hbp-2025.v1.0.0+ACC-AHA-2025+US+HUMAN_FILL_DATE.yaml"
+
+    build:
+      run_id: "HUMAN_FILL_UUID"
+      build_version_label: "v1.0.0+ACC-AHA-2025+US+HUMAN_FILL_ISO_DATE"
+      opened_at: "HUMAN_FILL_ISO_DATETIME"
+      sealed_at: "HUMAN_FILL_ISO_DATETIME"
+      manifest_payload_sha256: "HUMAN_FILL_64HEX"
+      pharm_rule_set_path: "work/HUMAN_FILL_RUN_ID/pharm-rules.json"
+      pharm_rule_set_sha256: "HUMAN_FILL_64HEX"
+      records_path: "work/HUMAN_FILL_RUN_ID/records.json"
+      records_sha256: "HUMAN_FILL_64HEX"
+      atomic_units_path: "work/HUMAN_FILL_RUN_ID/atomic-units.json"
+      atomic_units_sha256: "HUMAN_FILL_64HEX"
+      sair_path: "work/HUMAN_FILL_RUN_ID/sair.json"
+      sair_sha256: "HUMAN_FILL_64HEX"
+      terminology_bindings_path: "work/HUMAN_FILL_RUN_ID/terminology-bindings.json"
+      terminology_bindings_sha256: "HUMAN_FILL_64HEX"
+      gate1_register_paths: ["work/HUMAN_FILL_RUN_ID/gate1/cohort-HUMAN_FILL_16HEX.signed.jsonld"]
+      gate1_register_sha256s: ["HUMAN_FILL_64HEX"]
+      rxnorm_edition_pin: "HUMAN_FILL_RXNORM_EDITION"
+      fhir_r5_profile_pin: "HUMAN_FILL_FHIR_R5_PROFILE_PIN"
+      manifest_pregnancy_value_set_id: "HUMAN_FILL_PREGNANCY_VALUE_SET_ID"
+
+    rows:
+      # Pass — pregnancy denylist (shape mirrors 6.1; abbreviated here)
+      - { row_id: "cir-HUMAN_FILL_16HEX", referenced_rule: { rule_id: "pr-HUMAN_FILL_16HEX", rule_sha256: "HUMAN_FILL_64HEX", kind: denylist, parent_record_id: "rec-HUMAN_FILL_16HEX", parent_atomic_unit_id: "au-HUMAN_FILL_16HEX", gate1_cohort_id: "cohort-HUMAN_FILL_16HEX", acc_aha_cor: III-Harm, acc_aha_loe: B-NR, anchor_kind: cor-iii-harm-anchor, population_filter: [pregnant, postpartum], posture_at_cds: hard-refuse, cds_hook: order-select, attending_override_permitted: false, documentation_only: false, indicator_set: [critical], rxnorm_edition_pin: "HUMAN_FILL_RXNORM_EDITION", rxnorm_subset_sha256_recorded: "HUMAN_FILL_64HEX", bound_risk_engine_name: PREVENT }, acc_aha_cor: III-Harm, acc_aha_loe: B-NR, parent_record_id: "rec-HUMAN_FILL_16HEX", parent_atomic_unit_id: "au-HUMAN_FILL_16HEX", gate1_cohort_id: "cohort-HUMAN_FILL_16HEX", cross_check_1_record_inv09: { status: pass, anchor_kind_rule: cor-iii-harm-anchor, anchor_kind_record_inv09: cor-iii-harm-anchor, record_acc_aha_cor: III-Harm, failure_diagnostic: null }, cross_check_2_atomic_unit_anchor: { status: pass, anchor_kind_rule: cor-iii-harm-anchor, anchor_kind_atomic_unit: cor-iii-harm-anchor, sair_sha256: "HUMAN_FILL_64HEX", page: 12, bbox: { x0: 0, y0: 0, x1: 0, y1: 0 }, verbatim_roundtrip_ok: true, failure_diagnostic: null }, cross_check_3_recbox_cell_shape: { status: pass, canonical_shape_present: true, cor_cell_equals_rule_cor: true, loe_cell_equals_rule_loe: true, recommendation_cell_equals_source_text: true, failure_diagnostic: null }, cross_check_4_rxnorm_subset: { status: pass, subset_sha256: "HUMAN_FILL_64HEX", subset_sha256_upstream_p10: "HUMAN_FILL_64HEX", subset_sha256_rule_recorded: "HUMAN_FILL_64HEX", subset_size: 4, rxnorm_edition_pin: "HUMAN_FILL_RXNORM_EDITION", failure_diagnostic: null }, pregnancy_reinforcement: { applicability: applicable, status: pass, posture_at_cds_ok: true, cds_hook_ok: true, attending_override_permitted_ok: true, documentation_only_ok: true, indicator_set_ok: true, attending_override_pattern_scan_clean: true, pregnancy_value_set_id_present: true, manifest_pregnancy_value_set_id: "HUMAN_FILL_PREGNANCY_VALUE_SET_ID", failure_diagnostic: null }, pce_legacy_scan: { status: pass, fields_scanned: [referenced_rule.rationale, referenced_rule.clinical_consequence, notes], matches_count: 0, failure_diagnostic: null }, methods_passed: [record-inv09-anchor-match, atomic-unit-anchor-match, verbatim-roundtrip, recbox-cell-shape-match, recbox-cor-cell-equals-rule-cor, recbox-loe-cell-equals-rule-loe, recbox-recommendation-cell-equals-source-text, rxnorm-resolution-non-empty, rxnorm-subset-sha-match-upstream-p10, rxnorm-subset-sha-match-rule-recorded, pregnancy-reinforcement-pass, attending-override-pattern-scan-clean, pce-legacy-literal-scan-clean, fhir-r5-profile-validation-pass, canonical-sha-match], methods_failed: [], materialized: { evidence_id: "ev-cont-pr-HUMAN_FILL_16HEX", evidence_resource_path: "work/HUMAN_FILL_RUN_ID/contraindications/Evidence/ev-cont-pr-HUMAN_FILL_16HEX.json", evidence_resource_sha256: "HUMAN_FILL_64HEX", evidence_variable_id: "ev-pr-HUMAN_FILL_16HEX", evidence_variable_resource_path: "work/HUMAN_FILL_RUN_ID/contraindications/EvidenceVariable/ev-pr-HUMAN_FILL_16HEX.json", evidence_variable_resource_sha256: "HUMAN_FILL_64HEX", fhir_r5_profile_pin: "HUMAN_FILL_FHIR_R5_PROFILE_PIN", fhir_r5_profile_validation_status: pass, hl7_certainty_rating_recorded: "HUMAN_FILL_HL7_CERTAINTY" }, held_routing: null, blocked_routing: null, overall: pass, state: pass, notes: "HUMAN_FILL", fixity: { row_sha256: "HUMAN_FILL_64HEX", computed_at: "HUMAN_FILL_ISO_DATETIME", canonical_form: json-canonical-rfc8785 } }
+
+      # Held — non-pregnancy denylist with a recbox cell mismatch (CC3 fail)
+      - { row_id: "cir-HUMAN_FILL_16HEX", referenced_rule: { rule_id: "pr-HUMAN_FILL_16HEX", rule_sha256: "HUMAN_FILL_64HEX", kind: denylist, parent_record_id: "rec-HUMAN_FILL_16HEX", parent_atomic_unit_id: "au-HUMAN_FILL_16HEX", gate1_cohort_id: "cohort-HUMAN_FILL_16HEX", acc_aha_cor: IIa, acc_aha_loe: B-NR, anchor_kind: explicit-should-not-anchor, population_filter: [general-adult, ckd], posture_at_cds: hard-refuse, cds_hook: order-select, attending_override_permitted: false, documentation_only: false, indicator_set: [critical], rxnorm_edition_pin: "HUMAN_FILL_RXNORM_EDITION", rxnorm_subset_sha256_recorded: "HUMAN_FILL_64HEX", bound_risk_engine_name: PREVENT }, acc_aha_cor: IIa, acc_aha_loe: B-NR, parent_record_id: "rec-HUMAN_FILL_16HEX", parent_atomic_unit_id: "au-HUMAN_FILL_16HEX", gate1_cohort_id: "cohort-HUMAN_FILL_16HEX", cross_check_1_record_inv09: { status: pass, anchor_kind_rule: explicit-should-not-anchor, anchor_kind_record_inv09: explicit-should-not-anchor, record_acc_aha_cor: IIa, failure_diagnostic: null }, cross_check_2_atomic_unit_anchor: { status: pass, anchor_kind_rule: explicit-should-not-anchor, anchor_kind_atomic_unit: explicit-should-not-anchor, sair_sha256: "HUMAN_FILL_64HEX", page: 33, bbox: { x0: 0, y0: 0, x1: 0, y1: 0 }, verbatim_roundtrip_ok: true, failure_diagnostic: null }, cross_check_3_recbox_cell_shape: { status: fail, canonical_shape_present: true, cor_cell_equals_rule_cor: true, loe_cell_equals_rule_loe: false, recommendation_cell_equals_source_text: true, failure_diagnostic: { summary: "LOE cell on recbox parsed as 'B-R' but rule recorded 'B-NR'; suggests P6 re-parse needed." } }, cross_check_4_rxnorm_subset: { status: pass, subset_sha256: "HUMAN_FILL_64HEX", subset_sha256_upstream_p10: "HUMAN_FILL_64HEX", subset_sha256_rule_recorded: "HUMAN_FILL_64HEX", subset_size: 7, rxnorm_edition_pin: "HUMAN_FILL_RXNORM_EDITION", failure_diagnostic: null }, pregnancy_reinforcement: { applicability: not-applicable, status: not-applicable, posture_at_cds_ok: true, cds_hook_ok: true, attending_override_permitted_ok: true, documentation_only_ok: true, indicator_set_ok: true, attending_override_pattern_scan_clean: true, pregnancy_value_set_id_present: true, manifest_pregnancy_value_set_id: null, failure_diagnostic: null }, pce_legacy_scan: { status: pass, fields_scanned: [referenced_rule.rationale, referenced_rule.clinical_consequence, notes], matches_count: 0, failure_diagnostic: null }, methods_passed: [record-inv09-anchor-match, atomic-unit-anchor-match, verbatim-roundtrip, recbox-cor-cell-equals-rule-cor, recbox-recommendation-cell-equals-source-text, rxnorm-resolution-non-empty, rxnorm-subset-sha-match-upstream-p10, rxnorm-subset-sha-match-rule-recorded, attending-override-pattern-scan-clean, pce-legacy-literal-scan-clean], methods_failed: [recbox-loe-cell-equals-rule-loe], materialized: null, held_routing: { queue_path: "work/HUMAN_FILL_RUN_ID/queue/contraindications/cir-HUMAN_FILL_16HEX.json", queue_entry_sha256: "HUMAN_FILL_64HEX", two_person_rule_status: awaiting-resolver, held_remediation_hint: "Re-run P6 to re-parse the recbox; the LOE cell parsed B-R but the rule encodes B-NR." }, blocked_routing: null, overall: held, state: held, notes: "HUMAN_FILL", fixity: { row_sha256: "HUMAN_FILL_64HEX", computed_at: "HUMAN_FILL_ISO_DATETIME", canonical_form: json-canonical-rfc8785 } }
+
+      # Blocked — pregnancy denylist with AttendingOverridePattern detected on rationale text (illustrative; in production this would be caught earlier at P13 by PR-INV-16)
+      - { row_id: "cir-HUMAN_FILL_16HEX", referenced_rule: { rule_id: "pr-HUMAN_FILL_16HEX", rule_sha256: "HUMAN_FILL_64HEX", kind: denylist, parent_record_id: "rec-HUMAN_FILL_16HEX", parent_atomic_unit_id: "au-HUMAN_FILL_16HEX", gate1_cohort_id: "cohort-HUMAN_FILL_16HEX", acc_aha_cor: III-Harm, acc_aha_loe: B-NR, anchor_kind: cor-iii-harm-anchor, population_filter: [pregnant, postpartum], posture_at_cds: hard-refuse, cds_hook: order-select, attending_override_permitted: false, documentation_only: false, indicator_set: [critical], rxnorm_edition_pin: "HUMAN_FILL_RXNORM_EDITION", rxnorm_subset_sha256_recorded: "HUMAN_FILL_64HEX", bound_risk_engine_name: PREVENT }, acc_aha_cor: III-Harm, acc_aha_loe: B-NR, parent_record_id: "rec-HUMAN_FILL_16HEX", parent_atomic_unit_id: "au-HUMAN_FILL_16HEX", gate1_cohort_id: "cohort-HUMAN_FILL_16HEX", cross_check_1_record_inv09: { status: pass, anchor_kind_rule: cor-iii-harm-anchor, anchor_kind_record_inv09: cor-iii-harm-anchor, record_acc_aha_cor: III-Harm, failure_diagnostic: null }, cross_check_2_atomic_unit_anchor: { status: pass, anchor_kind_rule: cor-iii-harm-anchor, anchor_kind_atomic_unit: cor-iii-harm-anchor, sair_sha256: "HUMAN_FILL_64HEX", page: 12, bbox: { x0: 0, y0: 0, x1: 0, y1: 0 }, verbatim_roundtrip_ok: true, failure_diagnostic: null }, cross_check_3_recbox_cell_shape: { status: pass, canonical_shape_present: true, cor_cell_equals_rule_cor: true, loe_cell_equals_rule_loe: true, recommendation_cell_equals_source_text: true, failure_diagnostic: null }, cross_check_4_rxnorm_subset: { status: pass, subset_sha256:

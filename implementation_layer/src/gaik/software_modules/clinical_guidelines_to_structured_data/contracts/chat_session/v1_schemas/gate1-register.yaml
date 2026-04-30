@@ -1,0 +1,1526 @@
+# =============================================================================
+# gate1-register.yaml
+# -----------------------------------------------------------------------------
+# Standalone schema for the Gate 1 cohort register — the auditable, signed,
+# append-only ledger of SME extraction reviews that gate every
+# RecommendationRecordHTN before it advances to Phase 4 (terminology binding).
+#
+# This file is the contract for:
+#   - Cohort identity (a named batch of recommendations under review).
+#   - Reviewer credential evidence (named individuals, board certifications,
+#     identity proofing, conflicts of interest).
+#   - Per-record reviewer signoffs (decisions, rationales, edits, signatures).
+#   - Panel-chair cohort signoff (the additional layer of attestation that
+#     validates reviewer composition and disposes of any escalated records).
+#   - Cryptographic signature envelope (algorithm, key identity, signed
+#     content hash, time-stamping).
+#   - Post-signoff immutability rules (no mutation of signed content; new
+#     decisions require a new register version).
+#
+# Posture: caution over velocity, fidelity over coverage. Every signature is
+# verified, never trusted. Every reviewer is a named, credential-evidenced
+# individual, not a role token. Every decision is on a single record, never
+# on a batch. Every COR/LOE edit is forbidden and reclassified as
+# reject-rework. Conflicts of interest are disclosed, not ignored.
+#
+# This file does NOT contain clinical text. It records WHO signed WHAT and
+# WHEN, against the content hashes computed by `extract-recommendation-cor-loe`.
+# Clinical content lives in RecommendationRecordHTN; this file points to it.
+#
+# Authority:
+#   - ADR-HTN-001 D9 (three non-overridable human gates; Gate 1 enforces
+#     two-independent-SME signoff, panel-chair cohort signoff)
+#   - ADR-HTN-001 D10 (PHI fail-closed; copyright envelope respected)
+#   - ADR-HTN-001 D11 (Synthea-only test data; real PHI rejected at ingest)
+#   - ADR-HTN-001 D14 (supersession chain; predecessor 2017 advisory)
+#   - Parse + Extraction Phase Spec §4.11 (Gate 1 SME extraction review:
+#     composition, workflow, exit conditions)
+#   - Parent framework rules: `god-session`, `human-authorization`,
+#     `native-ux-tools`
+#
+# Relationship to neighboring schemas (separate files, referenced by $ref):
+#   - schemas/recommendation-record-htn.yaml   (each register entry references
+#                                              one or more
+#                                              RecommendationRecordHTN
+#                                              instances by id)
+#   - schemas/atomic-unit.yaml                 (referenced for atomicity-state
+#                                              acknowledgement)
+#   - schemas/sair.yaml                        (upstream; provides the source
+#                                              anchors the reviewers see)
+#   - schemas/acc-aha-grading.yaml             (closed COR/LOE enums; cited
+#                                              for the no-COR/LOE-edit rule)
+#   - schemas/guideline-manifest-hbp-2025.yaml (per-build manifest; cohort
+#                                              membership is scoped to a
+#                                              manifest)
+# =============================================================================
+
+$schema: "https://json-schema.org/draft/2020-12/schema"
+$id: "https://aiwg.io/cpg-htn-2025-acc-aha/schemas/gate1-register.yaml"
+title: "Gate1Register"
+description: >
+  Auditable, signed, append-only register of Gate 1 SME extraction reviews
+  for a cohort of RecommendationRecordHTN instances drawn from a single
+  guideline manifest. Each register entry binds a named reviewer with
+  credential evidence to a content-hash signature on a single record.
+  Cohort-level finality requires a panel-chair signoff. Post-signoff
+  mutation is forbidden; corrections require a new register version with
+  explicit predecessor chain.
+version: "1.0.0"
+schema_lifecycle: stable
+last_reviewed: "HUMAN_FILL: ISO-8601 date of most recent panel review of this schema"
+authority:
+  adr: ADR-HTN-001
+  framework: cpg-htn-2025-acc-aha
+  parent_framework: aiwg-training
+license: MIT
+
+# -----------------------------------------------------------------------------
+# 1. POLICY (normative; encodes Parse Spec §4.11)
+# -----------------------------------------------------------------------------
+
+policy:
+
+  reviewer_composition:
+    rule: >
+      Every advanced record MUST carry exactly two independent reviewer
+      signoffs from distinct, non-overlapping roles per the Gate-1
+      composition matrix in `extract-recommendation-cor-loe` §10.1. The
+      hypertension specialist appears on every record. The second co-reviewer
+      varies by domain (clinical pharmacology / MFM / geriatrics / primary
+      care / clinical informatics / nephrology / endocrinology / emergency
+      medicine / critical care).
+    matrix:
+      - domain: "diagnosis | classification | BP measurement | risk stratification"
+        required_roles:
+          - hypertension-specialist
+          - clinical-informaticist
+      - domain: "lifestyle | non-pharmacologic | implementation | team-based | measurement workflow"
+        required_roles:
+          - hypertension-specialist
+          - primary-care-clinician
+      - domain: "pharmacologic — general"
+        required_roles:
+          - hypertension-specialist
+          - clinical-pharmacologist
+      - domain: "pharmacologic — older adult"
+        required_roles:
+          - hypertension-specialist
+          - geriatrician
+      - domain: "pharmacologic — pregnancy / postpartum"
+        required_roles:
+          - mfm-or-obstetric-medicine
+          - clinical-pharmacologist
+        notes: >
+          The hypertension specialist may also appear; the schema accepts up
+          to four signoffs to accommodate institutional policy that requires
+          three signatures on pregnancy records.
+      - domain: "CKD / diabetes / HF / CAD / post-stroke modifiers"
+        required_roles:
+          - hypertension-specialist
+          - "(specialty-matched co-reviewer: clinical-pharmacologist OR nephrology OR endocrinology)"
+      - domain: "resistant HTN"
+        required_roles:
+          - hypertension-specialist
+          - clinical-pharmacologist
+      - domain: "secondary HTN"
+        required_roles:
+          - hypertension-specialist
+          - "(nephrology OR endocrinology)"
+      - domain: "urgency / emergency"
+        required_roles:
+          - hypertension-specialist
+          - "(emergency-medicine OR critical-care)"
+
+  no_batch_acceptance:
+    rule: >
+      No reviewer may sign more than one record per signature payload. Each
+      record requires its own signature against its own content_hash. Batch
+      acceptance is forbidden.
+
+  cor_loe_edit_prohibition:
+    rule: >
+      No reviewer signoff may carry an `edits[]` entry whose target field
+      is `acc_aha_cor` or `acc_aha_loe`. Any such request MUST be
+      reclassified as `reject-rework`. The validator MUST detect and reject
+      attempted COR/LOE edits.
+
+  post_signoff_immutability:
+    rule: >
+      Once a `ReviewerSignoff` is recorded with `decision ∈ {accept,
+      accept-with-edit}`, neither its `signature` nor the
+      `RecommendationRecord.content_hash` it signed may be mutated. Any
+      change to the underlying record (including reviewer-driven
+      `accept-with-edit`) produces a new `RecommendationRecord` content
+      hash and requires a new `ReviewerSignoff` against that new hash. The
+      old signoff is retained immutably for audit.
+
+  panel_chair_signoff:
+    rule: >
+      Cohort finality requires a `PanelChairSignoff` over the cohort's
+      manifest hash (the SHA-256 of the canonicalized list of all per-record
+      content_hashes plus their reviewer signoffs). The panel chair is a
+      named individual with credential evidence; their signoff disposes of
+      escalations and certifies reviewer-composition compliance.
+
+  conflict_of_interest:
+    rule: >
+      Every reviewer (and the panel chair) MUST disclose a current Conflict
+      of Interest (COI) statement. A reviewer with an undisclosed COI on a
+      record's subject (e.g., a pharmaceutical relationship for a drug-class
+      record) is automatically disqualified for that record; the disqualification
+      is recorded as a register entry of state `recused`, and a substitute
+      reviewer of the same role is required.
+
+  identity_proofing:
+    rule: >
+      Every reviewer's identity MUST be proofed at NIST SP 800-63 IAL2 or
+      higher (institutional verification with documented evidence). The
+      framework records the proofing class and evidence pointer; it does not
+      re-perform proofing.
+
+  signature_algorithm:
+    rule: >
+      Signatures use Ed25519 (default) or ECDSA-P256-SHA256 over the canonical
+      JCS (RFC 8785) form of the signed payload. The algorithm and key
+      identifier are pinned per-cohort; mismatch is a release blocker.
+
+  time_stamping:
+    rule: >
+      Every signoff carries an RFC 3161 time-stamp from a named TSA pinned in
+      the cohort manifest. Time-stamp absence is a release blocker.
+
+# -----------------------------------------------------------------------------
+# 2. CLOSED ENUMERATIONS
+# -----------------------------------------------------------------------------
+
+$defs:
+
+  # ---------------------------------------------------------------------------
+  # 2.1 Reviewer roles (must match the matrix in §1)
+  # ---------------------------------------------------------------------------
+  ReviewerRole:
+    type: string
+    enum:
+      - hypertension-specialist
+      - clinical-pharmacologist
+      - mfm-or-obstetric-medicine
+      - geriatrician
+      - primary-care-clinician
+      - clinical-informaticist
+      - nephrology
+      - endocrinology
+      - emergency-medicine
+      - critical-care
+      - panel-chair
+      - medical-director
+
+  # ---------------------------------------------------------------------------
+  # 2.2 Reviewer decision
+  # ---------------------------------------------------------------------------
+  ReviewerDecision:
+    type: string
+    enum:
+      - accept
+      - accept-with-edit
+      - reject-rework
+      - escalate-panel
+      - recused
+
+  # ---------------------------------------------------------------------------
+  # 2.3 Edit target (NOT acc_aha_cor or acc_aha_loe)
+  # ---------------------------------------------------------------------------
+  EditTarget:
+    type: string
+    enum:
+      - text_verbatim_typo
+      - supportive_text
+      - monitoring_text
+      - citation_link
+    description: >
+      Closed list of fields that may be edited at Gate 1 with reviewer
+      signoff. Notably absent: acc_aha_cor, acc_aha_loe (forbidden;
+      reject-rework instead), text_verbatim non-typo paraphrase
+      (forbidden; reject-rework instead), atomic_units (regenerated
+      automatically when text_verbatim is edited).
+
+  # ---------------------------------------------------------------------------
+  # 2.4 Identity assurance level
+  # ---------------------------------------------------------------------------
+  IdentityAssuranceLevel:
+    type: string
+    enum: [IAL1, IAL2, IAL3]
+    description: >
+      NIST SP 800-63 Identity Assurance Level. IAL2 is the minimum for
+      Gate 1; IAL3 is required for panel chair and medical director.
+
+  # ---------------------------------------------------------------------------
+  # 2.5 Authenticator assurance level
+  # ---------------------------------------------------------------------------
+  AuthenticatorAssuranceLevel:
+    type: string
+    enum: [AAL1, AAL2, AAL3]
+    description: >
+      NIST SP 800-63 Authenticator Assurance Level. AAL2 is the minimum
+      for Gate 1; AAL3 (hardware-backed) is required for panel chair and
+      medical director.
+
+  # ---------------------------------------------------------------------------
+  # 2.6 Credential kinds
+  # ---------------------------------------------------------------------------
+  CredentialKind:
+    type: string
+    enum:
+      - abim-certification
+      - abp-certification
+      - abfm-certification
+      - abem-certification
+      - aoa-board-certification
+      - ash-hypertension-specialist
+      - amia-ciip
+      - abpm-clinical-informatics
+      - bccp-pharmacy
+      - bcps-aq-cardiology
+      - mfm-board-certification
+      - geriatric-medicine-board-certification
+      - nephrology-board-certification
+      - endocrinology-board-certification
+      - critical-care-board-certification
+      - state-medical-license
+      - institutional-credential
+      - other
+
+  # ---------------------------------------------------------------------------
+  # 2.7 Conflict-of-interest kinds
+  # ---------------------------------------------------------------------------
+  COIKind:
+    type: string
+    enum:
+      - none
+      - financial-pharmaceutical
+      - financial-device
+      - research-grant
+      - speakers-bureau
+      - consultancy
+      - equity-holding
+      - employment-related
+      - family-relationship
+      - publication-author
+      - guideline-author
+      - other
+
+  # ---------------------------------------------------------------------------
+  # 2.8 Signature algorithms
+  # ---------------------------------------------------------------------------
+  SignatureAlgorithm:
+    type: string
+    enum:
+      - Ed25519
+      - ECDSA-P256-SHA256
+    description: >
+      Closed set of permitted algorithms. New algorithms require a schema
+      version bump and ADR-HTN-001 amendment.
+
+  # ---------------------------------------------------------------------------
+  # 2.9 Cohort lifecycle states
+  # ---------------------------------------------------------------------------
+  CohortState:
+    type: string
+    enum:
+      - draft
+      - in-review
+      - awaiting-panel-chair
+      - finalized
+      - superseded
+      - withdrawn
+    description: >
+      `finalized` is terminal for a register version. Any subsequent change
+      requires a new register version with `predecessor_register_version`
+      pointing to the finalized one and `superseded_at` recorded on the
+      predecessor.
+
+  # ---------------------------------------------------------------------------
+  # 2.10 Per-record disposition states
+  # ---------------------------------------------------------------------------
+  RecordDispositionState:
+    type: string
+    enum:
+      - pending
+      - accepted
+      - accepted-with-edit
+      - rework-required
+      - panel-escalated
+      - panel-resolved
+      - withdrawn
+
+# -----------------------------------------------------------------------------
+# 3. STRUCTURED TYPES
+# -----------------------------------------------------------------------------
+
+  # ---------------------------------------------------------------------------
+  # 3.1 IdentityProof — institutional verification of a reviewer
+  # ---------------------------------------------------------------------------
+  IdentityProof:
+    type: object
+    additionalProperties: false
+    required: [ial, aal, proofing_method, proofing_evidence_uri, proofed_at, proofed_by_org]
+    properties:
+      ial: { $ref: "#/$defs/IdentityAssuranceLevel" }
+      aal: { $ref: "#/$defs/AuthenticatorAssuranceLevel" }
+      proofing_method:
+        type: string
+        description: >
+          Free-text description of the institutional proofing process
+          (e.g., "in-person verification at <institution> on <date> with
+          government-issued ID"). The schema does not enumerate methods;
+          institutions vary.
+      proofing_evidence_uri:
+        type: string
+        format: uri
+        description: >
+          Pointer to the proofing evidence record in the institution's IAM
+          system. Must be a stable URI; the framework does not store the
+          underlying document (it may contain PII).
+      proofed_at:        { type: string, format: date-time }
+      proofed_by_org:    { type: string, description: "Institution/agency that performed the proofing." }
+      proofed_by_person:
+        type: [string, "null"]
+        description: Optional: name of the individual who performed the proofing.
+
+  # ---------------------------------------------------------------------------
+  # 3.2 Credential — board certification or institutional credential
+  # ---------------------------------------------------------------------------
+  Credential:
+    type: object
+    additionalProperties: false
+    required: [kind, issuer, evidence_uri, valid_from]
+    properties:
+      kind:           { $ref: "#/$defs/CredentialKind" }
+      issuer:         { type: string, description: "Issuing body name (e.g., 'American Board of Internal Medicine')." }
+      evidence_uri:
+        type: string
+        format: uri
+        description: >
+          Pointer to verification evidence (e.g., issuer's verification
+          portal lookup result captured at validation time).
+      valid_from:     { type: string, format: date }
+      valid_until:    { type: [string, "null"], format: date }
+      verified_at:    { type: string, format: date-time }
+      verified_by:    { type: string, description: "Identity of the framework operator who verified the credential." }
+
+  # ---------------------------------------------------------------------------
+  # 3.3 ConflictOfInterest — disclosed COI
+  # ---------------------------------------------------------------------------
+  ConflictOfInterest:
+    type: object
+    additionalProperties: false
+    required: [kind, disclosed_at, scope]
+    properties:
+      kind:           { $ref: "#/$defs/COIKind" }
+      counterparty:
+        type: [string, "null"]
+        description: >
+          Name of the entity (e.g., pharmaceutical company, device
+          manufacturer). Required for all kinds except `none`.
+      scope:
+        type: string
+        enum:
+          - none
+          - drug-class
+          - device-class
+          - therapeutic-area
+          - guideline-document
+          - other
+      scope_detail:
+        type: [string, "null"]
+        description: >
+          Free-text scope detail (e.g., RxNorm ingredient class, device
+          category). For `kind == "guideline-author"`, the value MUST be
+          "2025-ACC-AHA-HBP-Guideline".
+      disclosed_at:   { type: string, format: date-time }
+      mitigation:
+        type: [string, "null"]
+        description: >
+          Free-text description of mitigation (e.g., "Recused from all
+          MRA-related records; not assigned to MRA review queue").
+      auto_disqualifies_record_kinds:
+        type: array
+        items: { type: string }
+        description: >
+          Closed-by-policy list of record kinds (e.g., domains, drug
+          classes, populations) for which this COI auto-disqualifies the
+          reviewer. Validators check this list at signoff time.
+
+  # ---------------------------------------------------------------------------
+  # 3.4 Reviewer — named individual with credentials, identity, COI
+  # ---------------------------------------------------------------------------
+  Reviewer:
+    type: object
+    additionalProperties: false
+    required:
+      - reviewer_id
+      - legal_name
+      - role
+      - identity_proof
+      - credentials
+      - coi_disclosures
+      - public_key
+    properties:
+      reviewer_id:
+        type: string
+        pattern: "^rev-[0-9a-f]{16}$"
+        description: >
+          Stable, deterministic ID for this reviewer (truncated SHA-256 of
+          institution + employee number + identity_proof.proofing_evidence_uri).
+      legal_name:
+        type: string
+        minLength: 1
+        description: Full legal name. NOT redacted; this is an attestation record.
+      preferred_credential_string:
+        type: [string, "null"]
+        description: >
+          E.g., "Jane Doe, MD, FACC". Used in human-readable outputs only;
+          legal_name is the canonical identity field.
+      role: { $ref: "#/$defs/ReviewerRole" }
+      institution:
+        type: string
+        description: Primary institutional affiliation at the time of signoff.
+      identity_proof: { $ref: "#/$defs/IdentityProof" }
+      credentials:
+        type: array
+        minItems: 1
+        items: { $ref: "#/$defs/Credential" }
+        description: >
+          At least one credential MUST be present whose kind is consistent
+          with `role` per the framework's role-credential matrix.
+      coi_disclosures:
+        type: array
+        minItems: 1
+        items: { $ref: "#/$defs/ConflictOfInterest" }
+        description: >
+          MUST contain at least one entry. A reviewer with no COI records a
+          single entry of `kind: none`.
+      public_key:
+        type: object
+        additionalProperties: false
+        required: [algorithm, key_id, key_pem]
+        properties:
+          algorithm: { $ref: "#/$defs/SignatureAlgorithm" }
+          key_id:
+            type: string
+            description: Stable identifier for this key (e.g., institutional KMS key id).
+          key_pem:
+            type: string
+            description: PEM-encoded public key. Verified against the institution's KMS at validation time.
+          fingerprint_sha256:
+            type: string
+            pattern: "^[0-9a-f]{64}$"
+            description: SHA-256 fingerprint of the DER-encoded SubjectPublicKeyInfo.
+      added_to_panel_at: { type: string, format: date-time }
+
+  # ---------------------------------------------------------------------------
+  # 3.5 TimeStamp — RFC 3161 time-stamp envelope
+  # ---------------------------------------------------------------------------
+  TimeStamp:
+    type: object
+    additionalProperties: false
+    required: [tsa_name, tsa_url, tsa_cert_fingerprint_sha256, time, token_b64]
+    properties:
+      tsa_name: { type: string }
+      tsa_url:  { type: string, format: uri }
+      tsa_cert_fingerprint_sha256:
+        type: string
+        pattern: "^[0-9a-f]{64}$"
+      time:     { type: string, format: date-time }
+      token_b64:
+        type: string
+        description: Base64 of the RFC 3161 TSP TimeStampToken.
+
+  # ---------------------------------------------------------------------------
+  # 3.6 Signature — Ed25519 / ECDSA over JCS-canonical payload
+  # ---------------------------------------------------------------------------
+  Signature:
+    type: object
+    additionalProperties: false
+    required: [algorithm, key_id, payload_canonical_form, payload_sha256, signature_b64, time_stamp]
+    properties:
+      algorithm:           { $ref: "#/$defs/SignatureAlgorithm" }
+      key_id:              { type: string, description: Same as Reviewer.public_key.key_id at signing time. }
+      payload_canonical_form:
+        type: string
+        enum: [json-canonical-rfc8785]
+      payload_sha256:
+        type: string
+        pattern: "^[0-9a-f]{64}$"
+        description: SHA-256 over the JCS-canonical form of the signed payload.
+      signature_b64:
+        type: string
+        description: Base64-encoded raw signature bytes.
+      time_stamp:          { $ref: "#/$defs/TimeStamp" }
+      verifies:
+        type: boolean
+        description: >
+          Set to true by the validator after successful verification. The
+          validator regenerates the canonical payload from the referenced
+          record and re-verifies; it does not trust the producer's claim.
+
+  # ---------------------------------------------------------------------------
+  # 3.7 Edit — bounded, non-clinical-grade-altering edits
+  # ---------------------------------------------------------------------------
+  Edit:
+    type: object
+    additionalProperties: false
+    required: [target, before, after, rationale]
+    properties:
+      target:    { $ref: "#/$defs/EditTarget" }
+      before:    { type: string }
+      after:     { type: string }
+      rationale: { type: string, minLength: 1 }
+    description: >
+      Edits to acc_aha_cor and acc_aha_loe are forbidden by policy
+      (no_grade_reassignment); see G1-INV-12. The schema-level closed enum
+      `EditTarget` enforces this.
+
+  # ---------------------------------------------------------------------------
+  # 3.8 ReviewerSignoff — single reviewer's decision on a single record
+  # ---------------------------------------------------------------------------
+  ReviewerSignoff:
+    type: object
+    additionalProperties: false
+    required:
+      - signoff_id
+      - reviewer_id
+      - role
+      - record_id
+      - record_content_hash
+      - sair_sha256
+      - decision
+      - signed_at
+      - signature
+    properties:
+      signoff_id:
+        type: string
+        pattern: "^so-[0-9a-f]{16}$"
+        description: Stable, deterministic ID (truncated SHA-256 of reviewer_id, record_id, signed_at).
+      reviewer_id:         { type: string, pattern: "^rev-[0-9a-f]{16}$" }
+      role:                { $ref: "#/$defs/ReviewerRole" }
+      record_id:
+        type: string
+        pattern: "^rec-[0-9a-f]{16}$"
+        description: ID of the RecommendationRecordHTN being signed.
+      record_content_hash:
+        type: string
+        pattern: "^[0-9a-f]{64}$"
+        description: >
+          SHA-256 over the canonicalized RecommendationRecordHTN with
+          `provenance.reviewer_signoffs` stripped at signing time. This is
+          the hash the signature covers.
+      sair_sha256:
+        type: string
+        pattern: "^[0-9a-f]{64}$"
+        description: SHA-256 of the SAIR document the record was extracted from. Pinned for audit.
+      atomicity_state_acknowledged:
+        type: string
+        enum: [agreed, held]
+        description: >
+          The reviewer explicitly acknowledges the atomicity state of the
+          record at signoff time. `held` is permitted; the parent record
+          can advance with held atomicity per the atomic-unit schema, but
+          the reviewer signature attests acknowledgement.
+      decision:            { $ref: "#/$defs/ReviewerDecision" }
+      rationale:           { type: string, minLength: 1 }
+      edits:
+        type: array
+        items: { $ref: "#/$defs/Edit" }
+        description: >
+          Permitted only when decision == "accept-with-edit". Empty
+          otherwise. NEVER target acc_aha_cor or acc_aha_loe.
+      coi_attestation_at_signoff:
+        type: object
+        additionalProperties: false
+        required: [no_undisclosed_coi, applicable_coi_kinds]
+        properties:
+          no_undisclosed_coi:
+            type: boolean
+            description: >
+              Reviewer attests that all relevant COI for this record are
+              disclosed in the reviewer's COI list. False here is a release
+              blocker.
+          applicable_coi_kinds:
+            type: array
+            items: { $ref: "#/$defs/COIKind" }
+            description: COI kinds the reviewer flagged as applicable to this record.
+      signed_at:           { type: string, format: date-time }
+      signature:           { $ref: "#/$defs/Signature" }
+      session_attestations:
+        type: object
+        additionalProperties: false
+        required: [reviewed_source_pdf_region, reviewed_atomic_units, reviewed_pico_precheck]
+        properties:
+          reviewed_source_pdf_region: { type: boolean, description: Reviewer attests they viewed the rasterized source region. }
+          reviewed_atomic_units:      { type: boolean }
+          reviewed_pico_precheck:     { type: boolean }
+          reviewed_predecessor_2017:  { type: boolean, default: true }
+
+  # ---------------------------------------------------------------------------
+  # 3.9 RecordEntry — disposition of one record in the cohort
+  # ---------------------------------------------------------------------------
+  RecordEntry:
+    type: object
+    additionalProperties: false
+    required:
+      - record_id
+      - record_content_hash
+      - sair_sha256
+      - state
+      - signoffs
+    properties:
+      record_id:
+        type: string
+        pattern: "^rec-[0-9a-f]{16}$"
+      record_content_hash:
+        type: string
+        pattern: "^[0-9a-f]{64}$"
+        description: >
+          The hash signed by every signoff in `signoffs[]`. If the underlying
+          RecommendationRecordHTN is mutated post-signoff, the hash here
+          MUST diverge from the record's recomputed hash and the validator
+          MUST flag.
+      sair_sha256:
+        type: string
+        pattern: "^[0-9a-f]{64}$"
+      state:               { $ref: "#/$defs/RecordDispositionState" }
+      signoffs:
+        type: array
+        minItems: 0      # 0 permitted only for `pending`, `withdrawn`
+        maxItems: 4
+        items: { $ref: "#/$defs/ReviewerSignoff" }
+      escalation:
+        type: [object, "null"]
+        additionalProperties: false
+        required: [opened_at, reason, escalated_to_role]
+        properties:
+          opened_at:           { type: string, format: date-time }
+          reason:              { type: string, minLength: 1 }
+          escalated_to_role:   { $ref: "#/$defs/ReviewerRole" }
+          resolution:
+            type: [object, "null"]
+            additionalProperties: false
+            required: [resolved_at, decision, resolver_signoff]
+            properties:
+              resolved_at:       { type: string, format: date-time }
+              decision:          { $ref: "#/$defs/ReviewerDecision" }
+              resolver_signoff:  { $ref: "#/$defs/ReviewerSignoff" }
+      rework_history:
+        type: array
+        items:
+          type: object
+          additionalProperties: false
+          required: [opened_at, reviewer_id, reason]
+          properties:
+            opened_at:    { type: string, format: date-time }
+            reviewer_id:  { type: string }
+            reason:       { type: string, minLength: 1 }
+            resolved_at:  { type: [string, "null"], format: date-time }
+
+  # ---------------------------------------------------------------------------
+  # 3.10 PanelChairSignoff — cohort-level signoff
+  # ---------------------------------------------------------------------------
+  PanelChairSignoff:
+    type: object
+    additionalProperties: false
+    required:
+      - chair_reviewer_id
+      - cohort_manifest_hash
+      - composition_compliance_attested
+      - escalations_disposed
+      - signed_at
+      - signature
+    properties:
+      chair_reviewer_id:
+        type: string
+        pattern: "^rev-[0-9a-f]{16}$"
+        description: >
+          Reviewer ID of the panel chair. The Reviewer record for this id
+          MUST have role == "panel-chair" and identity_proof.ial == "IAL3"
+          and public_key.algorithm in SignatureAlgorithm.
+      cohort_manifest_hash:
+        type: string
+        pattern: "^[0-9a-f]{64}$"
+        description: >
+          SHA-256 over the JCS-canonical form of `records[]` with the
+          ordering canonicalized by record_id. The signature covers this
+          hash.
+      composition_compliance_attested:
+        type: boolean
+        description: >
+          Chair attests that every record in `records[]` carries the correct
+          reviewer composition per the matrix in §1. False here is a release
+          blocker.
+      escalations_disposed:
+        type: boolean
+        description: >
+          Chair attests that no record remains in `panel-escalated` state.
+          False here is a release blocker.
+      coi_attestation_at_signoff:
+        type: object
+        additionalProperties: false
+        required: [no_undisclosed_coi]
+        properties:
+          no_undisclosed_coi:
+            type: boolean
+            description: Chair's COI attestation at cohort signoff time.
+      signed_at: { type: string, format: date-time }
+      signature: { $ref: "#/$defs/Signature" }
+
+  # ---------------------------------------------------------------------------
+  # 3.11 RegisterAuditEvent — append-only audit trail
+  # ---------------------------------------------------------------------------
+  RegisterAuditEvent:
+    type: object
+    additionalProperties: false
+    required: [event_id, occurred_at, kind, actor_id, payload_sha256]
+    properties:
+      event_id:           { type: string, pattern: "^evt-[0-9a-f]{16}$" }
+      occurred_at:        { type: string, format: date-time }
+      kind:
+        type: string
+        enum:
+          - cohort-created
+          - reviewer-added
+          - reviewer-removed
+          - record-added
+          - signoff-recorded
+          - escalation-opened
+          - escalation-resolved
+          - rework-opened
+          - rework-resolved
+          - panel-chair-signed
+          - cohort-finalized
+          - cohort-superseded
+          - cohort-withdrawn
+      actor_id:           { type: string, description: Reviewer or operator id. }
+      payload_sha256:
+        type: string
+        pattern: "^[0-9a-f]{64}$"
+        description: SHA-256 of the JCS-canonical event payload.
+      prov_activity_id:   { type: [string, "null"], description: W3C PROV Activity id. }
+
+# -----------------------------------------------------------------------------
+# 4. ROOT TYPE — Gate1Register
+# -----------------------------------------------------------------------------
+type: object
+additionalProperties: false
+required:
+  - schema_version
+  - register_version
+  - guideline_manifest_ref
+  - cohort
+  - panel
+  - records
+  - audit_log
+  - fixity
+properties:
+
+  schema_version:
+    type: string
+    const: "1.0.0"
+
+  register_version:
+    type: string
+    pattern: "^[0-9]+\\.[0-9]+\\.[0-9]+$"
+    description: >
+      Semver of this register instance. A new register version is required
+      after any post-finalization change (rework, supersession, withdrawal).
+
+  predecessor_register_version:
+    type: [string, "null"]
+    pattern: "^[0-9]+\\.[0-9]+\\.[0-9]+$|^null$"
+    description: >
+      Required when this register supersedes a prior version. Forms a chain
+      of immutable register versions.
+
+  guideline_manifest_ref:
+    type: string
+    description: Pointer to `schemas/guideline-manifest-hbp-2025.yaml` instance for this build.
+
+  # ---------------------------------------------------------------------------
+  # 4.1 Cohort — identity and lifecycle
+  # ---------------------------------------------------------------------------
+  cohort:
+    type: object
+    additionalProperties: false
+    required: [cohort_id, name, run_id, opened_at, state, scope]
+    properties:
+      cohort_id:
+        type: string
+        pattern: "^cohort-[0-9a-f]{16}$"
+      name:                { type: string, minLength: 1, description: Human-readable cohort name. }
+      run_id:              { type: string, format: uuid }
+      opened_at:           { type: string, format: date-time }
+      finalized_at:        { type: [string, "null"], format: date-time }
+      superseded_at:       { type: [string, "null"], format: date-time }
+      state:               { $ref: "#/$defs/CohortState" }
+      scope:
+        type: object
+        additionalProperties: false
+        required: [domains, includes_pregnancy_records]
+        properties:
+          domains:
+            type: array
+            minItems: 1
+            items:
+              type: string
+              enum:
+                - diagnosis
+                - classification
+                - bp-measurement
+                - risk-stratification
+                - lifestyle
+                - pharmacologic-general
+                - pharmacologic-special-populations
+                - resistant-htn
+                - secondary-htn
+                - urgency-emergency
+                - implementation
+                - team-based-care
+                - measurement-workflow
+          includes_pregnancy_records:
+            type: boolean
+            description: >
+              True if any record in this cohort falls in the pregnancy /
+              postpartum domain. When true, the panel composition matrix
+              REQUIRES MFM + clinical pharmacology on those records.
+
+  # ---------------------------------------------------------------------------
+  # 4.2 Panel — full set of named reviewers and the panel chair
+  # ---------------------------------------------------------------------------
+  panel:
+    type: object
+    additionalProperties: false
+    required: [panel_id, reviewers, panel_chair_signoff]
+    properties:
+      panel_id:            { type: string, pattern: "^panel-[0-9a-f]{16}$" }
+      reviewers:
+        type: array
+        minItems: 2
+        items: { $ref: "#/$defs/Reviewer" }
+        description: >
+          Every named individual permitted to sign records in this cohort.
+          The panel chair is also included here with role == "panel-chair"
+          AND a separate Reviewer entry covering any specialty role they
+          additionally play (rare).
+      panel_chair_signoff:
+        oneOf:
+          - { $ref: "#/$defs/PanelChairSignoff" }
+          - type: "null"
+        description: >
+          Null until the cohort reaches `awaiting-panel-chair`; required
+          non-null for `state == "finalized"`.
+
+  # ---------------------------------------------------------------------------
+  # 4.3 Records — disposition of every record in the cohort
+  # ---------------------------------------------------------------------------
+  records:
+    type: array
+    minItems: 1
+    items: { $ref: "#/$defs/RecordEntry" }
+
+  # ---------------------------------------------------------------------------
+  # 4.4 Audit log — append-only
+  # ---------------------------------------------------------------------------
+  audit_log:
+    type: array
+    items: { $ref: "#/$defs/RegisterAuditEvent" }
+
+  # ---------------------------------------------------------------------------
+  # 4.5 Fixity — self-fingerprint
+  # ---------------------------------------------------------------------------
+  fixity:
+    type: object
+    additionalProperties: false
+    required: [register_sha256, computed_at, canonical_form]
+    properties:
+      register_sha256:
+        type: string
+        pattern: "^[0-9a-f]{64}$"
+      computed_at:    { type: string, format: date-time }
+      canonical_form:
+        type: string
+        enum: [json-canonical-rfc8785]
+
+# -----------------------------------------------------------------------------
+# 5. CROSS-FIELD INVARIANTS (validators MUST enforce)
+# -----------------------------------------------------------------------------
+
+invariants:
+
+  - id: G1-INV-01
+    description: >
+      Every `signoffs[*].reviewer_id` MUST refer to a Reviewer in
+      `panel.reviewers[]`. Every `panel_chair_signoff.chair_reviewer_id`
+      MUST refer to a Reviewer in `panel.reviewers[]` with role ==
+      "panel-chair".
+
+  - id: G1-INV-02
+    description: >
+      Every Reviewer MUST have at least one Credential whose `kind` is
+      consistent with `role` per the role-credential matrix maintained in
+      `docs/role-credential-matrix.md`. CI MUST verify the matrix file
+      exists and is consulted at validation time.
+
+  - id: G1-INV-03
+    description: >
+      Every Reviewer.identity_proof.ial MUST be `IAL2` or `IAL3`. Reviewers
+      with role `panel-chair` or `medical-director` MUST have ial == `IAL3`
+      and aal == `AAL3`.
+
+  - id: G1-INV-04
+    description: >
+      Every Reviewer.coi_disclosures MUST be non-empty. A reviewer with no
+      COI MUST record a single entry of kind `none`. Missing COI list is a
+      release blocker.
+
+  - id: G1-INV-05
+    description: >
+      For every RecordEntry in state ∈ {accepted, accepted-with-edit},
+      `signoffs[]` MUST contain exactly two ReviewerSignoff entries with
+      `decision ∈ {accept, accept-with-edit}` and distinct
+      `(reviewer_id, role)` pairs. Pregnancy-domain records MAY have up to
+      four signoffs; the second-and-third pair MUST satisfy the MFM +
+      clinical-pharmacology composition.
+
+  - id: G1-INV-06
+    description: >
+      Reviewer composition for each record MUST match the matrix in §1
+      according to the record's domain. The validator infers the record's
+      domain from `RecommendationRecordHTN.section_path` and
+      `pico_precheck.populations`. Mismatch is a release blocker.
+
+  - id: G1-INV-07
+    description: >
+      Every Signature.payload_sha256 MUST equal the SHA-256 of the
+      JCS-canonical form of the payload it claims to cover. Validators
+      regenerate and compare; mismatch is a release blocker.
+
+  - id: G1-INV-08
+    description: >
+      Every Signature MUST verify under the corresponding Reviewer's
+      public_key (algorithm + key_id matched). Validators perform the
+      cryptographic verification; the producer's `verifies: true` claim is
+      ignored.
+
+  - id: G1-INV-09
+    description: >
+      Every ReviewerSignoff.record_content_hash MUST equal the recomputed
+      content hash of the referenced RecommendationRecordHTN with
+      `provenance.reviewer_signoffs` stripped at the time of validation.
+      Mismatch indicates post-signoff mutation and is a release blocker
+      (post_signoff_immutability).
+
+  - id: G1-INV-10
+    description: >
+      Every ReviewerSignoff.sair_sha256 MUST equal
+      RecommendationRecordHTN.anchors.sair_sha256 for the referenced
+      record. Cross-SAIR signatures are forbidden.
+
+  - id: G1-INV-11
+    description: >
+      Every Signature.time_stamp.tsa_cert_fingerprint_sha256 MUST be a
+      member of the cohort's pinned TSA list (recorded in
+      `guideline-manifest-hbp-2025.yaml`). Unknown TSAs are a release blocker.
+
+  - id: G1-INV-12
+    description: >
+      No ReviewerSignoff.edits[] entry may have `target ∈ {acc_aha_cor,
+      acc_aha_loe}`. The `EditTarget` enum forbids this at the schema
+      boundary; validators MUST ALSO reject any ad-hoc string sneaked in
+      via tooling.
+
+  - id: G1-INV-13
+    description: >
+      For every signoff with decision == "accept-with-edit",
+      `edits[]` MUST be non-empty AND every Edit MUST point to a
+      RecommendationRecordHTN field that exists. The downstream pipeline
+      MUST regenerate atomic_units when text_verbatim is edited
+      (atomic-unit AU-INV-24).
+
+  - id: G1-INV-14
+    description: >
+      For every Reviewer assigned to a record where their
+      `coi_disclosures[].auto_disqualifies_record_kinds` overlaps the
+      record's kind set, the record's signoffs MUST include a recused
+      entry (decision == "recused") for that reviewer, and a substitute
+      reviewer of the same role MUST sign. Auto-disqualification cannot be
+      ignored.
+
+  - id: G1-INV-15
+    description: >
+      For every RecordEntry in state == "panel-escalated", an `escalation`
+      object MUST be present with non-null `escalated_to_role` and a null
+      `resolution` (until resolved). Escalation without an open resolution
+      record is a release blocker.
+
+  - id: G1-INV-16
+    description: >
+      For state == "finalized" on the cohort, `panel_chair_signoff` MUST
+      be non-null AND its `cohort_manifest_hash` MUST equal the recomputed
+      SHA-256 over the JCS-canonical form of `records[]` (ordered by
+      record_id ascending). Mismatch is a release blocker.
+
+  - id: G1-INV-17
+    description: >
+      `panel_chair_signoff.composition_compliance_attested` MUST be true
+      AND `escalations_disposed` MUST be true at finalization. False
+      values are release blockers.
+
+  - id: G1-INV-18
+    description: >
+      `audit_log[]` MUST be append-only and ordered by `occurred_at`. The
+      validator computes the chained hash of events and compares against
+      a separately-maintained chain; out-of-order or missing events
+      indicate tampering and are release blockers.
+
+  - id: G1-INV-19
+    description: >
+      `predecessor_register_version` MUST be set whenever this register
+      supersedes a prior finalized one. The predecessor register's state
+      MUST be `superseded` and its `superseded_at` MUST be set to a time
+      no later than this register's `opened_at`.
+
+  - id: G1-INV-20
+    description: >
+      `fixity.register_sha256` MUST equal the SHA-256 of the JCS-canonical
+      form of this register document with `fixity` excluded. The hash MUST
+      be deterministic across re-runs given identical inputs.
+
+  - id: G1-INV-21
+    description: >
+      No two signoffs from the same `reviewer_id` may exist on the same
+      record. A reviewer cannot self-pair to satisfy the two-independent
+      requirement.
+
+  - id: G1-INV-22
+    description: >
+      No signoff may carry `decision == "panel-escalated"` while the
+      RecordEntry's `state` is not `panel-escalated`. State and decisions
+      MUST be consistent.
+
+  - id: G1-INV-23
+    description: >
+      `cohort.scope.includes_pregnancy_records == true` AND any
+      pregnancy-domain record in `records[]` MUST have at least one
+      signoff with role == "mfm-or-obstetric-medicine" AND at least one
+      signoff with role == "clinical-pharmacologist". Composition matrix
+      enforcement is mandatory; no override exists.
+
+  - id: G1-INV-24
+    description: >
+      `panel_chair_signoff.signature.algorithm` MUST be the same algorithm
+      as the panel chair's `Reviewer.public_key.algorithm`. Algorithm
+      drift between key registration and signing is a release blocker.
+
+  - id: G1-INV-25
+    description: >
+      The cohort's TSA list (in guideline-manifest-hbp-2025.yaml) MUST be
+      pinned BEFORE any signoff is recorded. Time-stamps from TSAs added
+      after a signoff are advisory only and do not satisfy the
+      `time_stamp` requirement; the framework MUST recompute and reject.
+
+# =============================================================================
+# 6. WORKED EXAMPLES (shape-correctness fixtures)
+# -----------------------------------------------------------------------------
+# These examples are illustrative shape-correctness fixtures. EVERY field whose
+# value can ONLY come from a real reviewer, a real institution, real
+# credential evidence, or the source PDF is marked `HUMAN_FILL` with explicit
+# instructions. The pipeline refuses to operate on registers containing
+# `HUMAN_FILL` tokens.
+#
+# Two examples are provided:
+#   6.1 An in-review cohort with one accepted record and one panel-escalated.
+#   6.2 A finalized cohort with panel-chair signoff complete.
+# =============================================================================
+
+examples:
+
+  # ---------------------------------------------------------------------------
+  # 6.1 In-review cohort
+  # ---------------------------------------------------------------------------
+  - schema_version: "1.0.0"
+    register_version: "1.0.0"
+    predecessor_register_version: null
+    guideline_manifest_ref: "guideline-manifest-hbp-2025.v1.0.0+ACC-AHA-2025+US+HUMAN_FILL_DATE.yaml"
+
+    cohort:
+      cohort_id: "cohort-HUMAN_FILL_16HEX"
+      name: "HUMAN_FILL: e.g., 'HBP-2025 Diagnosis & Measurement Cohort A'"
+      run_id: "HUMAN_FILL_UUID"
+      opened_at: "HUMAN_FILL_ISO_DATETIME"
+      finalized_at: null
+      superseded_at: null
+      state: in-review
+      scope:
+        domains: [diagnosis, bp-measurement, risk-stratification]
+        includes_pregnancy_records: false
+
+    panel:
+      panel_id: "panel-HUMAN_FILL_16HEX"
+      reviewers:
+        - reviewer_id: "rev-HUMAN_FILL_16HEX"
+          legal_name: "HUMAN_FILL: legal name as on government ID"
+          preferred_credential_string: "HUMAN_FILL: e.g., 'Jane Doe, MD, FACC'"
+          role: hypertension-specialist
+          institution: "HUMAN_FILL: institution name"
+          identity_proof:
+            ial: IAL2
+            aal: AAL2
+            proofing_method: "HUMAN_FILL: institutional proofing description"
+            proofing_evidence_uri: "https://HUMAN_FILL/proofing-evidence"
+            proofed_at: "HUMAN_FILL_ISO_DATETIME"
+            proofed_by_org: "HUMAN_FILL: institution"
+            proofed_by_person: "HUMAN_FILL: optional"
+          credentials:
+            - kind: abim-certification
+              issuer: "American Board of Internal Medicine"
+              evidence_uri: "https://HUMAN_FILL/abim-verification"
+              valid_from: "HUMAN_FILL_ISO_DATE"
+              valid_until: "HUMAN_FILL_ISO_DATE"
+              verified_at: "HUMAN_FILL_ISO_DATETIME"
+              verified_by: "HUMAN_FILL: framework operator id"
+            - kind: ash-hypertension-specialist
+              issuer: "American Society of Hypertension"
+              evidence_uri: "https://HUMAN_FILL/ash-verification"
+              valid_from: "HUMAN_FILL_ISO_DATE"
+              valid_until: null
+              verified_at: "HUMAN_FILL_ISO_DATETIME"
+              verified_by: "HUMAN_FILL"
+          coi_disclosures:
+            - kind: none
+              counterparty: null
+              scope: none
+              scope_detail: null
+              disclosed_at: "HUMAN_FILL_ISO_DATETIME"
+              mitigation: null
+              auto_disqualifies_record_kinds: []
+          public_key:
+            algorithm: Ed25519
+            key_id: "HUMAN_FILL: institutional KMS key id"
+            key_pem: "HUMAN_FILL: PEM block"
+            fingerprint_sha256: "HUMAN_FILL_64HEX"
+          added_to_panel_at: "HUMAN_FILL_ISO_DATETIME"
+
+        - reviewer_id: "rev-HUMAN_FILL_16HEX"
+          legal_name: "HUMAN_FILL"
+          preferred_credential_string: "HUMAN_FILL"
+          role: clinical-informaticist
+          institution: "HUMAN_FILL"
+          identity_proof:
+            ial: IAL2
+            aal: AAL2
+            proofing_method: "HUMAN_FILL"
+            proofing_evidence_uri: "https://HUMAN_FILL/proofing-evidence"
+            proofed_at: "HUMAN_FILL_ISO_DATETIME"
+            proofed_by_org: "HUMAN_FILL"
+            proofed_by_person: null
+          credentials:
+            - kind: amia-ciip
+              issuer: "American Medical Informatics Association"
+              evidence_uri: "https://HUMAN_FILL/amia-verification"
+              valid_from: "HUMAN_FILL_ISO_DATE"
+              valid_until: null
+              verified_at: "HUMAN_FILL_ISO_DATETIME"
+              verified_by: "HUMAN_FILL"
+          coi_disclosures:
+            - kind: none
+              counterparty: null
+              scope: none
+              scope_detail: null
+              disclosed_at: "HUMAN_FILL_ISO_DATETIME"
+              mitigation: null
+              auto_disqualifies_record_kinds: []
+          public_key:
+            algorithm: Ed25519
+            key_id: "HUMAN_FILL"
+            key_pem: "HUMAN_FILL"
+            fingerprint_sha256: "HUMAN_FILL_64HEX"
+          added_to_panel_at: "HUMAN_FILL_ISO_DATETIME"
+
+      panel_chair_signoff: null
+
+    records:
+      - record_id: "rec-HUMAN_FILL_16HEX"
+        record_content_hash: "HUMAN_FILL_64HEX"
+        sair_sha256: "HUMAN_FILL_64HEX"
+        state: accepted
+        signoffs:
+          - signoff_id: "so-HUMAN_FILL_16HEX"
+            reviewer_id: "rev-HUMAN_FILL_16HEX"   # the hypertension specialist
+            role: hypertension-specialist
+            record_id: "rec-HUMAN_FILL_16HEX"
+            record_content_hash: "HUMAN_FILL_64HEX"
+            sair_sha256: "HUMAN_FILL_64HEX"
+            atomicity_state_acknowledged: agreed
+            decision: accept
+            rationale: "HUMAN_FILL: reviewer's free-text rationale"
+            edits: []
+            coi_attestation_at_signoff:
+              no_undisclosed_coi: true
+              applicable_coi_kinds: []
+            signed_at: "HUMAN_FILL_ISO_DATETIME"
+            signature:
+              algorithm: Ed25519
+              key_id: "HUMAN_FILL"
+              payload_canonical_form: json-canonical-rfc8785
+              payload_sha256: "HUMAN_FILL_64HEX"
+              signature_b64: "HUMAN_FILL_BASE64"
+              time_stamp:
+                tsa_name: "HUMAN_FILL: pinned TSA name"
+                tsa_url: "https://HUMAN_FILL/tsa"
+                tsa_cert_fingerprint_sha256: "HUMAN_FILL_64HEX"
+                time: "HUMAN_FILL_ISO_DATETIME"
+                token_b64: "HUMAN_FILL_BASE64"
+              verifies: true   # set by validator after re-verification
+            session_attestations:
+              reviewed_source_pdf_region: true
+              reviewed_atomic_units: true
+              reviewed_pico_precheck: true
+              reviewed_predecessor_2017: true
+          - signoff_id: "so-HUMAN_FILL_16HEX"
+            reviewer_id: "rev-HUMAN_FILL_16HEX"   # the clinical informaticist
+            role: clinical-informaticist
+            record_id: "rec-HUMAN_FILL_16HEX"
+            record_content_hash: "HUMAN_FILL_64HEX"
+            sair_sha256: "HUMAN_FILL_64HEX"
+            atomicity_state_acknowledged: agreed
+            decision: accept
+            rationale: "HUMAN_FILL"
+            edits: []
+            coi_attestation_at_signoff:
+              no_undisclosed_coi: true
+              applicable_coi_kinds: []
+            signed_at: "HUMAN_FILL_ISO_DATETIME"
+            signature:
+              algorithm: Ed25519
+              key_id: "HUMAN_FILL"
+              payload_canonical_form: json-canonical-rfc8785
+              payload_sha256: "HUMAN_FILL_64HEX"
+              signature_b64: "HUMAN_FILL_BASE64"
+              time_stamp:
+                tsa_name: "HUMAN_FILL"
+                tsa_url: "https://HUMAN_FILL/tsa"
+                tsa_cert_fingerprint_sha256: "HUMAN_FILL_64HEX"
+                time: "HUMAN_FILL_ISO_DATETIME"
+                token_b64: "HUMAN_FILL_BASE64"
+              verifies: true
+            session_attestations:
+              reviewed_source_pdf_region: true
+              reviewed_atomic_units: true
+              reviewed_pico_precheck: true
+        escalation: null
+        rework_history: []
+
+      - record_id: "rec-HUMAN_FILL_16HEX"
+        record_content_hash: "HUMAN_FILL_64HEX"
+        sair_sha256: "HUMAN_FILL_64HEX"
+        state: panel-escalated
+        signoffs:
+          - signoff_id: "so-HUMAN_FILL_16HEX"
+            reviewer_id: "rev-HUMAN_FILL_16HEX"
+            role: hypertension-specialist
+            record_id: "rec-HUMAN_FILL_16HEX"
+            record_content_hash: "HUMAN_FILL_64HEX"
+            sair_sha256: "HUMAN_FILL_64HEX"
+            atomicity_state_acknowledged: agreed
+            decision: escalate-panel
+            rationale: |
+              HUMAN_FILL: e.g., "Predecessor-2017 mapping ambiguity; the
+              reviewer requests panel-chair adjudication."
+            edits: []
+            coi_attestation_at_signoff:
+              no_undisclosed_coi: true
+              applicable_coi_kinds: []
+            signed_at: "HUMAN_FILL_ISO_DATETIME"
+            signature:
+              algorithm: Ed25519
+              key_id: "HUMAN_FILL"
+              payload_canonical_form: json-canonical-rfc8785
+              payload_sha256: "HUMAN_FILL_64HEX"
+              signature_b64: "HUMAN_FILL_BASE64"
+              time_stamp:
+                tsa_name: "HUMAN_FILL"
+                tsa_url: "https://HUMAN_FILL/tsa"
+                tsa_cert_fingerprint_sha256: "HUMAN_FILL_64HEX"
+                time: "HUMAN_FILL_ISO_DATETIME"
+                token_b64: "HUMAN_FILL_BASE64"
+              verifies: true
+            session_attestations:
+              reviewed_source_pdf_region: true
+              reviewed_atomic_units: true
+              reviewed_pico_precheck: true
+        escalation:
+          opened_at: "HUMAN_FILL_ISO_DATETIME"
+          reason: "HUMAN_FILL"
+          escalated_to_role: panel-chair
+          resolution: null
+        rework_history: []
+
+    audit_log:
+      - event_id: "evt-HUMAN_FILL_16HEX"
+        occurred_at: "HUMAN_FILL_ISO_DATETIME"
+        kind: cohort-created
+        actor_id: "HUMAN_FILL: operator id"
+        payload_sha256: "HUMAN_FILL_64HEX"
+        prov_activity_id: "HUMAN_FILL"
+
+    fixity:
+      register_sha256: "HUMAN_FILL_64HEX"
+      computed_at: "HUMAN_FILL_ISO_DATETIME"
+      canonical_form: json-canonical-rfc8785
+
+  # ---------------------------------------------------------------------------
+  # 6.2 Finalized cohort (panel-chair signoff present)
+  # ---------------------------------------------------------------------------
+  - schema_version: "1.0.0"
+    register_version: "1.0.0"
+    predecessor_register_version: null
+    guideline_manifest_ref: "guideline-manifest-hbp-2025.v1.0.0+ACC-AHA-2025+US+HUMAN_FILL_DATE.yaml"
+
+    cohort:
+      cohort_id: "cohort-HUMAN_FILL_16HEX"
+      name: "HUMAN_FILL: cohort name"
+      run_id: "HUMAN_FILL_UUID"
+      opened_at: "HUMAN_FILL_ISO_DATETIME"
+      finalized_at: "HUMAN_FILL_ISO_DATETIME"
+      superseded_at: null
+      state: finalized
+      scope:
+        domains: [diagnosis, bp-measurement, risk-stratification]
+        includes_pregnancy_records: false
+
+    panel:
+      panel_id: "panel-HUMAN_FILL_16HEX"
+      reviewers:
+        # Same two specialty reviewers as 6.1 plus the panel chair.
+        - { reviewer_id: "rev-HUMAN_FILL_16HEX", legal_name: "HUMAN_FILL", preferred_credential_string: "HUMAN_FILL", role: hypertension-specialist, institution: "HUMAN_FILL", identity_proof: { ial: IAL2, aal: AAL2, proofing_method: "HUMAN_FILL", proofing_evidence_uri: "https://HUMAN_FILL/proof", proofed_at: "HUMAN_FILL_ISO_DATETIME", proofed_by_org: "HUMAN_FILL", proofed_by_person: null }, credentials: [ { kind: abim-certification, issuer: "American Board of Internal Medicine", evidence_uri: "https://HUMAN_FILL", valid_from: "HUMAN_FILL_ISO_DATE", valid_until: "HUMAN_FILL_ISO_DATE", verified_at: "HUMAN_FILL_ISO_DATETIME", verified_by: "HUMAN_FILL" } ], coi_disclosures: [ { kind: none, counterparty: null, scope: none, scope_detail: null, disclosed_at: "HUMAN_FILL_ISO_DATETIME", mitigation: null, auto_disqualifies_record_kinds: [] } ], public_key: { algorithm: Ed25519, key_id: "HUMAN_FILL", key_pem: "HUMAN_FILL", fingerprint_sha256: "HUMAN_FILL_64HEX" }, added_to_panel_at: "HUMAN_FILL_ISO_DATETIME" }
+        - { reviewer_id: "rev-HUMAN_FILL_16HEX", legal_name: "HUMAN_FILL", preferred_credential_string: "HUMAN_FILL", role: clinical-informaticist, institution: "HUMAN_FILL", identity_proof: { ial: IAL2, aal: AAL2, proofing_method: "HUMAN_FILL", proofing_evidence_uri: "https://HUMAN_FILL/proof", proofed_at: "HUMAN_FILL_ISO_DATETIME", proofed_by_org: "HUMAN_FILL", proofed_by_person: null }, credentials: [ { kind: amia-ciip, issuer: "American Medical Informatics Association", evidence_uri: "https://HUMAN_FILL", valid_from: "HUMAN_FILL_ISO_DATE", valid_until: null, verified_at: "HUMAN_FILL_ISO_DATETIME", verified_by: "HUMAN_FILL" } ], coi_disclosures: [ { kind: none, counterparty: null, scope: none, scope_detail: null, disclosed_at: "HUMAN_FILL_ISO_DATETIME", mitigation: null, auto_disqualifies_record_kinds: [] } ], public_key: { algorithm: Ed25519, key_id: "HUMAN_FILL", key_pem: "HUMAN_FILL", fingerprint_sha256: "HUMAN_FILL_64HEX" }, added_to_panel_at: "HUMAN_FILL_ISO_DATETIME" }
+        - reviewer_id: "rev-HUMAN_FILL_16HEX"
+          legal_name: "HUMAN_FILL"
+          preferred_credential_string: "HUMAN_FILL"
+          role: panel-chair
+          institution: "HUMAN_FILL"
+          identity_proof:
+            ial: IAL3
+            aal: AAL3
+            proofing_method: "HUMAN_FILL"
+            proofing_evidence_uri: "https://HUMAN_FILL/chair-proof"
+            proofed_at: "HUMAN_FILL_ISO_DATETIME"
+            proofed_by_org: "HUMAN_FILL"
+            proofed_by_person: null
+          credentials:
+            - kind: institutional-credential
+              issuer: "HUMAN_FILL"
+              evidence_uri: "https://HUMAN_FILL/chair-credential"
+              valid_from: "HUMAN_FILL_ISO_DATE"
+              valid_until: null
+              verified_at: "HUMAN_FILL_ISO_DATETIME"
+              verified_by: "HUMAN_FILL"
+          coi_disclosures:
+            - kind: none
+              counterparty: null
+              scope: none
+              scope_detail: null
+              disclosed_at: "HUMAN_FILL_ISO_DATETIME"
+              mitigation: null
+              auto_disqualifies_record_kinds: []
+          public_key:
+            algorithm: Ed25519
+            key_id: "HUMAN_FILL"
+            key_pem: "HUMAN_FILL"
+            fingerprint_sha256: "HUMAN_FILL_64HEX"
+          added_to_panel_at: "HUMAN_FILL_ISO_DATETIME"
+      panel_chair_signoff:
+        chair_reviewer_id: "rev-HUMAN_FILL_16HEX"
+        cohort_manifest_hash: "HUMAN_FILL_64HEX"
+        composition_compliance_attested: true
+        escalations_disposed: true
+        coi_attestation_at_signoff:
+          no_undisclosed_coi: true
+        signed_at: "HUMAN_FILL_ISO_DATETIME"
+        signature:
+          algorithm: Ed25519
+          key_id: "HUMAN_FILL"
+          payload_canonical_form: json-canonical-rfc8785
+          payload_sha256: "HUMAN_FILL_64HEX"
+          signature_b64: "HUMAN_FILL_BASE64"
+          time_stamp:
+            tsa_name: "HUMAN_FILL"
+            tsa_url: "https://HUMAN_FILL/tsa"
+            tsa_cert_fingerprint_sha256: "HUMAN_FILL_64HEX"
+            time: "HUMAN_FILL_ISO_DATETIME"
+            token_b64: "HUMAN_FILL_BASE64"
+          verifies: true
+
+    records:
+      # Two accepted records; identical shape to the accepted record in 6.1.
+      - record_id: "rec-HUMAN_FILL_16HEX"
+        record_content_hash: "HUMAN_FILL_64HEX"
+        sair_sha256: "HUMAN_FILL_64HEX"
+        state: accepted
+        signoffs:
+          - { signoff_id: "so-HUMAN_FILL_16HEX", reviewer_id: "rev-HUMAN_FILL_16HEX", role: hypertension-specialist, record_id: "rec-HUMAN_FILL_16HEX", record_content_hash: "HUMAN_FILL_64HEX", sair_sha256: "HUMAN_FILL_64HEX", atomicity_state_acknowledged: agreed, decision: accept, rationale: "HUMAN_FILL", edits: [], coi_attestation_at_signoff: { no_undisclosed_coi: true, applicable_coi_kinds: [] }, signed_at: "HUMAN_FILL_ISO_DATETIME", signature: { algorithm: Ed25519, key_id: "HUMAN_FILL", payload_canonical_form: json-canonical-rfc8785, payload_sha256: "HUMAN_FILL_64HEX", signature_b64: "HUMAN_FILL_BASE64", time_stamp: { tsa_name: "HUMAN_FILL", tsa_url: "https://HUMAN_FILL/tsa", tsa_cert_fingerprint_sha256: "HUMAN_FILL_64HEX", time: "HUMAN_FILL_ISO_DATETIME", token_b64: "HUMAN_FILL_BASE64" }, verifies: true }, session_attestations: { reviewed_source_pdf_region: true, reviewed_atomic_units: true, reviewed_pico_precheck: true, reviewed_predecessor_2017: true } }
+          - { signoff_id: "so-HUMAN_FILL_16HEX", reviewer_id: "rev-HUMAN_FILL_16HEX", role: clinical-informaticist, record_id: "rec-HUMAN_FILL_16HEX", record_content_hash: "HUMAN_FILL_64HEX", sair_sha256: "HUMAN_FILL_64HEX", atomicity_state_acknowledged: agreed, decision: accept, rationale: "HUMAN_FILL", edits: [], coi_attestation_at_signoff: { no_undisclosed_coi: true, applicable_coi_kinds: [] }, signed_at: "HUMAN_FILL_ISO_DATETIME", signature: { algorithm: Ed25519, key_id: "HUMAN_FILL", payload_canonical_form: json-canonical-rfc8785, payload_sha256: "HUMAN_FILL_64HEX", signature_b64: "HUMAN_FILL_BASE64", time_stamp: { tsa_name: "HUMAN_FILL", tsa_url: "https://HUMAN_FILL/tsa", tsa_cert_fingerprint_sha256: "HUMAN_FILL_64HEX", time: "HUMAN_FILL_ISO_DATETIME", token_b64: "HUMAN_FILL_BASE64" }, verifies: true }, session_attestations: { reviewed_source_pdf_region: true, reviewed_atomic_units: true, reviewed_pico_precheck: true } }
+        escalation: null
+        rework_history: []
+
+    audit_log:
+      - { event_id: "evt-HUMAN_FILL_16HEX", occurred_at: "HUMAN_FILL_ISO_DATETIME", kind: cohort-created,        actor_id: "HUMAN_FILL", payload_sha256: "HUMAN_FILL_64HEX", prov_activity_id: "HUMAN_FILL" }
+      - { event_id: "evt-HUMAN_FILL_16HEX", occurred_at: "HUMAN_FILL_ISO_DATETIME", kind: signoff-recorded,       actor_id: "rev-HUMAN_FILL_16HEX", payload_sha256: "HUMAN_FILL_64HEX", prov_activity_id: "HUMAN_FILL" }
+      - { event_id: "evt-HUMAN_FILL_16HEX", occurred_at: "HUMAN_FILL_ISO_DATETIME", kind: signoff-recorded,       actor_id: "rev-HUMAN_FILL_16HEX", payload_sha256: "HUMAN_FILL_64HEX", prov_activity_id: "HUMAN_FILL" }
+      - { event_id: "evt-HUMAN_FILL_16HEX", occurred_at: "HUMAN_FILL_ISO_DATETIME", kind: panel-chair-signed,     actor_id: "rev-HUMAN_FILL_16HEX", payload_sha256: "HUMAN_FILL_64HEX", prov_activity_id: "HUMAN_FILL" }
+      - { event_id: "evt-HUMAN_FILL_16HEX", occurred_at: "HUMAN_FILL_ISO_DATETIME", kind: cohort-finalized,       actor_id: "HUMAN_FILL", payload_sha256: "HUMAN_FILL_64HEX", prov_activity_id: "HUMAN_FILL" }
+
+    fixity:
+      register_sha256: "HUMAN_FILL_64HEX"
+      computed_at: "HUMAN_FILL_ISO_DATETIME"
+      canonical_form: json-canonical-rfc8785
+
+# =============================================================================
+# 7. CHANGE CONTROL
+# -----------------------------------------------------------------------------
+# Any change to this schema (closed enums, policy clauses, validation rules,
+# invariants, or example fixtures) requires:
+#   - A change-controlled diff with regression evaluation against the golden set.
+#   - Panel-chair signoff.
+#   - Increment of `schema_version` (semver: breaking = major).
+#   - Update of `last_reviewed`.
+#   - Coordinated update of every producing/consuming skill's `tools_lock`
+#     reference and acceptance test fixtures.
+#   - Any change to: composition matrix; no_batch_acceptance; cor_loe_edit_prohibition;
+#     post_signoff_immutability; conflict_of_interest; identity_proofing;
+#     signature_algorithm; or time_stamping requires ALSO an ADR-HTN-001
+#     amendment with documented rationale and a new panel-chair signoff.
+# =============================================================================
+
+change_control:
+  semver: true
+  golden_set_regression_required: true
+  panel_chair_signoff_required: true
+  parent_schemas_to_update_on_breaking_change:
+    - cpg-htn-2025-acc-aha/schemas/recommendation-record-htn.yaml
+    - cpg-htn-2025-acc-aha/schemas/atomic-unit.yaml
+    - cpg-htn-2025-acc-aha/schemas/sair.yaml
+    - cpg-htn-2025-acc-aha/schemas/guideline-manifest-hbp-2025.yaml
+  parent_skills_to_update_on_breaking_change:
+    - cpg-htn-2025-acc-aha/skills/extract-recommendation-cor-loe
+    - cpg-htn-2025-acc-aha/skills/gate1-sme-review
+    - cpg-htn-2025-acc-aha/skills/parse-reconcile-queue
+    - cpg-htn-2025-acc-aha/skills/safety-hbp
+  adr_amendment_required_for_policy_changes:
+    composition_matrix: true
+    no_batch_acceptance: true
+    cor_loe_edit_prohibition: true
+    post_signoff_immutability: true
+    conflict_of_interest: true
+    identity_proofing: true
+    signature_algorithm: true
+    time_stamping: true
+    adr_to_amend: ADR-HTN-001 D9
