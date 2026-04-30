@@ -426,7 +426,8 @@ class ClinicalGuidelineKnowledgeExtractor:
                 field_checks=[
                     "Every actionable clinical item must be supported by a verbatim source_quote.",
                     "Blood pressure thresholds must match the source exactly.",
-                    "Medication indications, contraindications, and monitoring must not be inferred.",
+                    "Medication indications, contraindications, and monitoring "
+                    "must not be inferred.",
                     "Recommendation strength and evidence grade must be null when absent.",
                 ],
                 item_level_checks=[

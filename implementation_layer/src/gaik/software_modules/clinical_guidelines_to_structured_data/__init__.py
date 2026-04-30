@@ -1,5 +1,11 @@
 """Clinical guideline documents to traceable structured knowledge."""
 
+from .llm_leverage import (
+    CliModelAccessTarget,
+    LLMUsageDescriptor,
+    get_cli_model_access_targets,
+    get_knowledge_extraction_llm_usage_map,
+)
 from .pipeline import (
     DEFAULT_HYPERTENSION_EXTRACTION_REQUIREMENTS,
     ClinicalGuidelineKnowledgeExtractor,
@@ -7,12 +13,6 @@ from .pipeline import (
     ClinicalGuidelineSource,
     ClinicalRecommendation,
     HypertensionClinicalKnowledge,
-)
-from .llm_leverage import (
-    CliModelAccessTarget,
-    LLMUsageDescriptor,
-    get_cli_model_access_targets,
-    get_knowledge_extraction_llm_usage_map,
 )
 
 __all__ = [

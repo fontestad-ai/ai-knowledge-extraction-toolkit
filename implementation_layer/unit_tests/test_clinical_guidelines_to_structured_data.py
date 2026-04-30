@@ -27,7 +27,10 @@ def test_auto_parser_selection_by_extension():
 def test_coerce_parsed_output_prefers_known_text_fields():
     extractor = ClinicalGuidelineKnowledgeExtractor(api_config={"model": "test", "api_key": "x"})
 
-    assert extractor._coerce_parsed_output_to_text({"parsed_markdown": "# Guideline"}) == "# Guideline"
+    assert (
+        extractor._coerce_parsed_output_to_text({"parsed_markdown": "# Guideline"})
+        == "# Guideline"
+    )
     assert extractor._coerce_parsed_output_to_text({"text_content": "body"}) == "body"
     assert extractor._coerce_parsed_output_to_text("plain") == "plain"
 
