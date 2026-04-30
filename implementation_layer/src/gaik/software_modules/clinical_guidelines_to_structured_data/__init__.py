@@ -7,7 +7,10 @@ from .llm_leverage import (
     get_knowledge_extraction_llm_usage_map,
 )
 from .pipeline import (
+    AtomicClinicalKnowledgeUnit,
+    ClinicalOperationalizationBundle,
     DEFAULT_HYPERTENSION_EXTRACTION_REQUIREMENTS,
+    AdaptiveExtractionRoute,
     ClinicalGuidelineKnowledgeExtractor,
     ClinicalGuidelinePipelineResult,
     ClinicalGuidelineSource,
@@ -19,6 +22,9 @@ __all__ = [
     "ClinicalGuidelineKnowledgeExtractor",
     "ClinicalGuidelinePipelineResult",
     "ClinicalGuidelineSource",
+    "AdaptiveExtractionRoute",
+    "AtomicClinicalKnowledgeUnit",
+    "ClinicalOperationalizationBundle",
     "ClinicalRecommendation",
     "HypertensionClinicalKnowledge",
     "DEFAULT_HYPERTENSION_EXTRACTION_REQUIREMENTS",

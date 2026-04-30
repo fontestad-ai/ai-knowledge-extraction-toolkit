@@ -7,6 +7,13 @@ unchanged for OpenAI/Azure-only use cases.
 """
 
 from gaik.software_components.llm.base import ChatResponse, ProviderClient
+from gaik.software_components.llm.cli_runtime import (
+    CliInvocationRequest,
+    CliInvocationResult,
+    CliModelRuntime,
+    CliModelTarget,
+    get_default_cli_runtime_targets,
+)
 from gaik.software_components.llm.config import get_llm_config
 from gaik.software_components.llm.factory import (
     assert_openai_or_azure,
@@ -17,11 +24,16 @@ from gaik.software_components.llm.providers import Provider, resolve_provider
 
 __all__ = [
     "ChatResponse",
+    "CliInvocationRequest",
+    "CliInvocationResult",
+    "CliModelRuntime",
+    "CliModelTarget",
     "Provider",
     "ProviderClient",
     "assert_openai_or_azure",
     "build_compat_client",
     "create_llm_client",
+    "get_default_cli_runtime_targets",
     "get_llm_config",
     "resolve_provider",
 ]

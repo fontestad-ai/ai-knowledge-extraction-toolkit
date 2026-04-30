@@ -11,6 +11,8 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Literal
 
+from gaik.software_components.llm import get_default_cli_runtime_targets
+
 LLMProcessStage = Literal[
     "parsing",
     "classification",
@@ -147,55 +149,13 @@ def get_knowledge_extraction_llm_usage_map() -> tuple[LLMUsageDescriptor, ...]:
 def get_cli_model_access_targets() -> tuple[CliModelAccessTarget, ...]:
     """Return target providers for a future CLI-backed centralized wrapper/factory."""
 
-    return (
+    return tuple(
         CliModelAccessTarget(
-            provider_key="claude_code_cli",
-            expected_cli="claude",
-            intended_models=("Claude Code subscription models",),
-            target_factory_surface="gaik.software_components.llm.ProviderClient",
-            implementation_note=(
-                "Add a subprocess-backed ProviderClient adapter that sends prompts to the "
-                "Claude Code CLI only when the CLI is installed and authenticated locally."
-            ),
-        ),
-        CliModelAccessTarget(
-            provider_key="codex_cli",
-            expected_cli="codex",
-            intended_models=("Codex / ChatGPT subscription models",),
-            target_factory_surface="gaik.software_components.llm.ProviderClient",
-            implementation_note=(
-                "Add a CLI adapter for non-interactive Codex invocations with explicit "
-                "timeout, no shell interpolation, and structured-output post-parsing."
-            ),
-        ),
-        CliModelAccessTarget(
-            provider_key="gemini_cli",
-            expected_cli="gemini",
-            intended_models=("Gemini subscription models",),
-            target_factory_surface="gaik.software_components.llm.ProviderClient",
-            implementation_note=(
-                "Add a Gemini CLI adapter alongside the existing Google API adapter for "
-                "workflows that must use an authenticated local subscription CLI."
-            ),
-        ),
-        CliModelAccessTarget(
-            provider_key="github_copilot_cli",
-            expected_cli="gh copilot",
-            intended_models=("GitHub Copilot subscription models",),
-            target_factory_surface="gaik.software_components.llm.ProviderClient",
-            implementation_note=(
-                "Add an adapter only for supported non-interactive Copilot CLI surfaces; "
-                "fallback to API-backed providers when structured output is unavailable."
-            ),
-        ),
-        CliModelAccessTarget(
-            provider_key="snowflake_cortex_cli",
-            expected_cli="snow sql",
-            intended_models=("Snowflake Cortex models",),
-            target_factory_surface="gaik.software_components.llm.ProviderClient",
-            implementation_note=(
-                "Add a Snowflake CLI/Cortex adapter that routes prompts through a configured "
-                "warehouse and returns normalized ProviderClient responses."
-            ),
-        ),
+            provider_key=target.provider_key,
+            expected_cli=target.display_command,
+            intended_models=target.intended_models,
+            target_factory_surface=target.target_factory_surface,
+            implementation_note=target.implementation_note,
+        )
+        for target in get_default_cli_runtime_targets()
     )

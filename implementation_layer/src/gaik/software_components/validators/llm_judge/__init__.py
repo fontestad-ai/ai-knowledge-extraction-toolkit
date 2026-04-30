@@ -50,6 +50,12 @@ Example:
 """
 
 from .calibration import calibrate_against_human_labels
+from .clinical_consensus import (
+    ClinicalConsensusEngine,
+    ClinicalConsensusPolicy,
+    ClinicalConsensusResult,
+    ClinicalConsensusRoleResult,
+)
 from .llm_judge import DEFAULT_MODELS, LLMJudge, parse_judge_flags
 from .pairwise import compare_pairwise
 from .panel import LLMJudgePanel
@@ -82,6 +88,10 @@ __all__ = [
     "JudgeUsage",
     "CalibrationItem",
     "CalibrationReport",
+    "ClinicalConsensusEngine",
+    "ClinicalConsensusPolicy",
+    "ClinicalConsensusResult",
+    "ClinicalConsensusRoleResult",
     "PairwiseResult",
     "Severity",
     "ScoringMode",
