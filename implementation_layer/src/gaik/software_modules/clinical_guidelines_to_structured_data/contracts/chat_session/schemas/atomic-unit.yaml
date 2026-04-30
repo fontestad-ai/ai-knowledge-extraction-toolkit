@@ -1,0 +1,911 @@
+# =============================================================================
+# atomic-unit.yaml
+# -----------------------------------------------------------------------------
+# Standalone schema for atomic decomposition of recommendation text into
+# character-offset spans, produced by `extract-recommendation-cor-loe` (Phase 3
+# Task §4.2) and consumed by every downstream Phase-3 / Phase-4 / Phase-5
+# clinical extraction skill (terminology binding, BP threshold extraction,
+# pharm-rule extraction, CQL authoring, CDS Hooks packaging).
+#
+# This file encodes the dual-LLM, span-only, inheritance-explicit decomposition
+# contract in full. It is the single source of truth for:
+#   - what "atomic" means in this framework
+#   - the closed kind enum (atomic-recommendation, qualifier, exclusion,
+#     monitoring, citation)
+#   - the partition rules over text_verbatim
+#   - the inheritance rules from parent recommendation
+#   - the dual-LLM agreement protocol (span-only outputs, Jaccard threshold,
+#     no-free-text rule, no-grade-reassignment rule)
+#   - the held / agreed / conflict lifecycle states
+#
+# Posture: caution over velocity, fidelity over coverage, verbatim over
+# paraphrase. NO LLM may emit free-text recommendation content. NO atomic
+# unit may carry a different COR or LOE than its parent. NO span may exist
+# that is not a contiguous substring of `text_verbatim`. NO unit advances
+# without two-LLM Jaccard >= 0.95 OR an explicit `held` state with an open
+# FlaggedItem and a two-person-resolved record.
+#
+# This file does NOT define semantic interpretation of atomic units. It
+# defines only the syntactic contract (spans, kinds, partition rules,
+# agreement thresholds). Clinical interpretation belongs to the SME panel
+# at Gate 1.
+#
+# Authority:
+#   - ADR-HTN-001 D3 (native ACC/AHA grading preserved per parent;
+#     children inherit, never reassign)
+#   - ADR-HTN-001 D4 (1 atomic recommendation = 1 record granularity)
+#   - ADR-HTN-001 D9 (three non-overridable human gates; Gate 1 enforces
+#     atomic-unit validity)
+#   - Parse + Extraction Phase Spec §4.2 (full): atomicity policy,
+#     decomposition workflow, span-only LLM tool schema, dual-LLM agreement,
+#     inheritance rules, no-grade-reassignment escalation
+#   - Parent framework rules: `god-session`, `human-authorization`
+#
+# Relationship to neighboring schemas (separate files, referenced by $ref):
+#   - schemas/recommendation-record-htn.yaml   (consumer; embeds AtomicUnit
+#                                              instances under
+#                                              atomic_units / qualifier_spans
+#                                              / exclusion_spans /
+#                                              monitoring_spans /
+#                                              citation_spans)
+#   - schemas/sair.yaml                        (upstream; provides
+#                                              text_verbatim and char_spans)
+#   - schemas/acc-aha-grading.yaml             (closed COR/LOE enums;
+#                                              referenced for
+#                                              no-grade-reassignment rule)
+#   - schemas/gate1-register.yaml              (downstream; reviewer signoffs
+#                                              record per-unit acceptance
+#                                              when atomicity is part of
+#                                              the reviewer's surface)
+#   - schemas/guideline-manifest-hbp-2025.yaml (per-build manifest)
+# =============================================================================
+
+$schema: "https://json-schema.org/draft/2020-12/schema"
+$id: "https://aiwg.io/cpg-htn-2025-acc-aha/schemas/atomic-unit.yaml"
+title: "AtomicUnit"
+description: >
+  Span-only, inheritance-explicit decomposition of a parent recommendation's
+  text_verbatim into atomic clinical assertions and their syntactic
+  modifiers. Every span is a contiguous substring of text_verbatim, verified
+  not trusted. Every kind is drawn from a closed enum. No LLM may emit
+  free text. No unit may carry a different COR or LOE than its parent.
+version: "1.0.0"
+schema_lifecycle: stable
+last_reviewed: "HUMAN_FILL: ISO-8601 date of most recent panel review of this schema"
+authority:
+  adr: ADR-HTN-001
+  framework: cpg-htn-2025-acc-aha
+  parent_framework: aiwg-training
+license: MIT
+
+# -----------------------------------------------------------------------------
+# 1. ATOMICITY POLICY (normative; encodes Parse Spec §4.2.1)
+# -----------------------------------------------------------------------------
+# A unit is atomic when it can be expressed as a single
+#   (subject, action, modifier-set, condition-set, source-anchor)
+# tuple without losing meaning. Atomic decomposition NEVER changes wording;
+# it ONLY splits using the rule-based pre-segmenter plus a dual-LLM proposer
+# that operates on the verbatim text and is required to return character-offset
+# spans into text_verbatim — not new prose.
+# -----------------------------------------------------------------------------
+
+policy:
+
+  unit_of_atomicity:
+    definition: >
+      A clause expressing exactly one (subject, action, modifier-set,
+      condition-set, source-anchor) tuple, identified as a contiguous
+      substring of text_verbatim. Multiple tuples bundled in a single
+      sentence by conjunction, semicolon, or list marker are NOT atomic
+      and MUST be decomposed.
+    examples_of_non_atomic_constructs:
+      - "Use of A and B is recommended."
+      - "Do X; do not do Y."
+      - "Treatment with A, B, or C is reasonable."
+      - "Lifestyle and pharmacologic therapy are recommended."
+    rule: >
+      The atomic-recommendation span MUST cover exactly one such tuple.
+      Multi-tuple sentences yield multiple atomic-recommendation spans, each
+      a substring of text_verbatim, with shared characters (e.g., the
+      sentence's subject) repeated by reference, never duplicated by edit.
+
+  span_ownership:
+    rule: >
+      Every character of text_verbatim MUST belong to at most one span of
+      kind `atomic-recommendation`. Modifier kinds (qualifier, exclusion,
+      monitoring, citation) MAY overlap each other and MAY overlap an
+      atomic-recommendation span only when the source semantics demand it
+      (e.g., a citation marker embedded inside an atomic recommendation).
+      No partition rule allows two atomic-recommendation spans to overlap.
+
+  edit_prohibition:
+    rule: >
+      No span may extend, contract, normalize, or otherwise alter the
+      bytes of text_verbatim. The bytes are read-only. Any reviewer-driven
+      typographic correction (`accept-with-edit` at Gate 1) is recorded in
+      the parent record's reviewer-signoff edits[] array, not in this schema.
+      AtomicUnit instances are deleted and re-created if the parent's
+      text_verbatim is corrected; spans never carry stale offsets.
+
+  inheritance:
+    rule: >
+      Every AtomicUnit inherits its parent recommendation's acc_aha_cor,
+      acc_aha_loe, references, section_path, and anchors. Inheritance is
+      RECORDED EXPLICITLY (`inherits_from`), never assumed. Validators MUST
+      confirm the parent record exists and that the inherited fields are
+      consistent.
+
+  no_grade_reassignment:
+    rule: >
+      No AtomicUnit may carry a different COR or LOE than its parent.
+      Constructs in the source that *appear* to require a different grade
+      for a sub-clause (e.g., a parenthetical reading as a Class III: Harm
+      embedded in a Class I row) are by definition a parsing or
+      reviewer-judgment matter and MUST be escalated as
+      `atomicity-grade-conflict`. The skill NEVER assigns a different
+      COR/LOE to a child unit. Resolution is panel-chair only.
+
+  no_free_text_from_llm:
+    rule: >
+      LLM proposers MUST return only character-offset spans plus closed-enum
+      kinds. Any free-text field, summary, paraphrase, "clarification", or
+      synthesized substring is rejected at the validator boundary. Two
+      retries are permitted per LLM per row before the row's atomicity is
+      held and routed to `llm-protocol-failure`.
+
+# -----------------------------------------------------------------------------
+# 2. CLOSED ENUMERATIONS
+# -----------------------------------------------------------------------------
+
+$defs:
+
+  # ---------------------------------------------------------------------------
+  # 2.1 Atomic-unit kind
+  # ---------------------------------------------------------------------------
+  AtomicUnitKind:
+    type: string
+    enum:
+      - atomic-recommendation
+      - qualifier
+      - exclusion
+      - monitoring
+      - citation
+    description: >
+      Closed kind enum.
+        - atomic-recommendation: a clause expressing exactly one
+          (subject, action, modifier-set, condition-set, source-anchor)
+          tuple. Inherits parent COR/LOE.
+        - qualifier: a clause that further conditions an
+          atomic-recommendation (e.g., "in adults aged ≥65 years",
+          "when out-of-office BP is unavailable"). Does NOT carry its
+          own COR/LOE. May overlap an atomic-recommendation span.
+        - exclusion: a clause that excludes a population or condition
+          from the atomic-recommendation (e.g., "except in pregnancy").
+          Does NOT carry its own COR/LOE.
+        - monitoring: a clause prescribing follow-up cadence or lab
+          monitoring associated with the atomic-recommendation. Does
+          NOT carry its own COR/LOE.
+        - citation: a footnote-marker substring or in-line citation
+          phrase. Does NOT carry its own COR/LOE.
+
+  # ---------------------------------------------------------------------------
+  # 2.2 Atomicity lifecycle state
+  # ---------------------------------------------------------------------------
+  AtomicityState:
+    type: string
+    enum:
+      - agreed
+      - held
+      - conflict
+      - resolved
+    description: >
+      Per-row atomicity lifecycle state.
+        - agreed: dual-LLM Jaccard >= 0.95 over atomic-recommendation
+          spans, AND kind agreement exact-equal across the two models on
+          every span. Advances.
+        - held: agreement below threshold, OR a structural validation
+          failed; the row's COR/LOE/verbatim record may still advance
+          through Gate 1 with `atomicity_state: held`, but downstream
+          skills that require atomicity (terminology binding, threshold
+          extraction, pharm-rule extraction, CQL authoring) BLOCK on it.
+        - conflict: a `atomicity-grade-conflict` was detected (see §1
+          no_grade_reassignment). Requires panel-chair resolution.
+        - resolved: a previously `held` or `conflict` state was resolved
+          through the reconciliation queue under the two-person rule.
+
+  # ---------------------------------------------------------------------------
+  # 2.3 LLM disagreement category (for queue routing)
+  # ---------------------------------------------------------------------------
+  AtomicityDisagreementKind:
+    type: string
+    enum:
+      - span-boundary-disagreement
+      - kind-disagreement
+      - count-disagreement
+      - protocol-failure
+      - grade-conflict
+      - covering-gap
+      - covering-overlap
+      - non-substring-output
+    description: >
+      Diagnostic categories used by the reconciliation queue to route the
+      held row to the right reviewer with the right rationale. NONE are
+      auto-resolved.
+
+  # ---------------------------------------------------------------------------
+  # 2.4 Validation severity
+  # ---------------------------------------------------------------------------
+  ValidationSeverity:
+    type: string
+    enum: [info, warning, blocking]
+    description: >
+      `blocking` validation failures prevent the AtomicUnit (and the parent
+      record's atomicity) from advancing.
+
+# -----------------------------------------------------------------------------
+# 3. STRUCTURED TYPES
+# -----------------------------------------------------------------------------
+
+  # ---------------------------------------------------------------------------
+  # 3.1 LlmProposer — pinned model identity for one of the two proposers
+  # ---------------------------------------------------------------------------
+  LlmProposer:
+    type: object
+    additionalProperties: false
+    required: [model, pin, family]
+    properties:
+      model:
+        type: string
+        description: Model identifier (e.g., "claude-opus-4", "gpt-class-x").
+      pin:
+        type: string
+        description: Vendor-version pin (e.g., "@2026-03-15"). Recorded in tools_lock and verified at runtime.
+      family:
+        type: string
+        enum: [anthropic, openai, google, meta, mistral, cohere, ai21, other]
+        description: >
+          Model family. The dual-LLM protocol REQUIRES the two proposers to
+          come from different families. Validators MUST reject runs where
+          family[0] == family[1].
+      temperature:
+        type: number
+        minimum: 0.0
+        maximum: 1.0
+        description: Required to be 0.0 in production; non-zero permitted only on fixture runs.
+      seed:
+        type: [integer, "null"]
+        description: Required to be non-null in production where the vendor honors deterministic seeds; null permitted only on vendors that do not.
+      response_sha:
+        type: string
+        pattern: "^[0-9a-f]{64}$"
+        description: SHA-256 of the LLM's raw tool-schema-conformant JSON response.
+
+  # ---------------------------------------------------------------------------
+  # 3.2 Span — character-offset range into parent text_verbatim
+  # ---------------------------------------------------------------------------
+  Span:
+    type: array
+    minItems: 2
+    maxItems: 2
+    items: { type: integer, minimum: 0 }
+    description: >
+      "[start, end]" half-open character offsets into the parent record's
+      text_verbatim. MUST satisfy 0 <= start < end <= len(text_verbatim).
+
+  # ---------------------------------------------------------------------------
+  # 3.3 SpanProposal — what one LLM proposed for this span (for audit)
+  # ---------------------------------------------------------------------------
+  SpanProposal:
+    type: object
+    additionalProperties: false
+    required: [model, span, kind]
+    properties:
+      model:
+        type: string
+        description: Same identifier as LlmProposer.model.
+      span: { $ref: "#/$defs/Span" }
+      kind: { $ref: "#/$defs/AtomicUnitKind" }
+
+  # ---------------------------------------------------------------------------
+  # 3.4 ReconciliationFlag — per-unit FlaggedItem hint
+  # ---------------------------------------------------------------------------
+  ReconciliationFlag:
+    type: object
+    additionalProperties: false
+    required: [kind, severity, opened_at]
+    properties:
+      kind:           { $ref: "#/$defs/AtomicityDisagreementKind" }
+      severity:       { $ref: "#/$defs/ValidationSeverity" }
+      opened_at:      { type: string, format: date-time }
+      reason:         { type: string, minLength: 1 }
+      flagged_item_id:
+        type: string
+        pattern: "^flag-[0-9a-f]{16}$"
+        description: Pointer to the SAIR/records FlaggedItem that owns this disagreement.
+
+  # ---------------------------------------------------------------------------
+  # 3.5 InheritedFields — recorded explicitly per §1 inheritance rule
+  # ---------------------------------------------------------------------------
+  InheritedFields:
+    type: object
+    additionalProperties: false
+    required: [acc_aha_cor, acc_aha_loe, section_path]
+    properties:
+      acc_aha_cor:
+        # Resolved by $ref to acc-aha-grading.yaml at validation time.
+        # Inlined enum reproduced here ONLY for self-containment; the
+        # canonical source is schemas/acc-aha-grading.yaml and validators
+        # MUST verify equality against that file (GRADING-INV-01).
+        type: string
+        enum: ["I", "IIa", "IIb", "III: No Benefit", "III: Harm"]
+      acc_aha_loe:
+        type: string
+        enum: ["A", "B-R", "B-NR", "C-LD", "C-EO"]
+      section_path:
+        type: array
+        minItems: 1
+        items: { type: string }
+      references:
+        type: array
+        items:
+          type: object
+          additionalProperties: false
+          required: [ref_id]
+          properties:
+            ref_id: { type: string }
+            doi:    { type: [string, "null"], pattern: "^10\\..+/.+$" }
+            pmid:   { type: [string, "null"], pattern: "^[0-9]+$" }
+      anchors_pdf_sha256:
+        type: string
+        pattern: "^[0-9a-f]{64}$"
+        description: Inherited from parent record's anchors.pdf_sha256.
+      anchors_sair_sha256:
+        type: string
+        pattern: "^[0-9a-f]{64}$"
+        description: Inherited from parent record's anchors.sair_sha256.
+      anchors_page:
+        type: integer
+        minimum: 1
+
+# -----------------------------------------------------------------------------
+# 4. ROOT TYPE — AtomicUnit
+# -----------------------------------------------------------------------------
+type: object
+additionalProperties: false
+required:
+  - schema_version
+  - unit_id
+  - parent_recommendation_id
+  - inherits_from
+  - kind
+  - span
+  - inherited_fields
+  - proposers
+  - agreement
+  - state
+properties:
+
+  schema_version:
+    type: string
+    const: "1.0.0"
+
+  unit_id:
+    type: string
+    pattern: "^au-[0-9a-f]{16}$"
+    description: >
+      Stable, deterministic ID for this atomic unit. Computed as
+      truncated-128-bit SHA-256 over
+        (parent_recommendation_id, kind, span.start, span.end,
+         tools_lock.lock_sha)
+      Hex-encoded; the leading "au-" is the namespace prefix.
+
+  parent_recommendation_id:
+    type: string
+    pattern: "^rec-[0-9a-f]{16}$"
+    description: ID of the parent RecommendationRecordHTN.
+
+  inherits_from:
+    type: string
+    description: >
+      Same value as `parent_recommendation_id`. Recorded twice for the same
+      reason RecommendationRecordHTN records `parent_recommendation_id` even
+      for top-level records: it makes the inheritance explicit and machine-
+      checkable in isolation, without requiring the schema validator to also
+      load the parent.
+
+  kind: { $ref: "#/$defs/AtomicUnitKind" }
+
+  span: { $ref: "#/$defs/Span" }
+
+  inherited_fields: { $ref: "#/$defs/InheritedFields" }
+
+  proposers:
+    type: array
+    minItems: 2
+    maxItems: 2
+    items: { $ref: "#/$defs/LlmProposer" }
+    description: >
+      Exactly two LLM proposers, from distinct families. Validators MUST
+      reject runs with one proposer or with two proposers of the same family.
+
+  proposals:
+    type: array
+    minItems: 2
+    maxItems: 2
+    items: { $ref: "#/$defs/SpanProposal" }
+    description: >
+      What each LLM proposed for this unit. Order corresponds to `proposers[]`.
+      For `state == "agreed"`, the two proposals' kinds MUST be exact-equal
+      and their span Jaccard MUST be >= 0.95.
+
+  agreement:
+    type: object
+    additionalProperties: false
+    required: [span_jaccard, kind_exact_equal]
+    properties:
+      span_jaccard:
+        type: number
+        minimum: 0.0
+        maximum: 1.0
+        description: >
+          Character-level Jaccard similarity between the two proposals'
+          spans. Required >= 0.95 for `state == "agreed"`.
+      kind_exact_equal:
+        type: boolean
+        description: >
+          True iff the two proposals' kinds match exactly. Required true
+          for `state == "agreed"`.
+
+  state: { $ref: "#/$defs/AtomicityState" }
+
+  reconciliation:
+    type: array
+    items: { $ref: "#/$defs/ReconciliationFlag" }
+    description: >
+      Open or resolved flags. Empty for `state == "agreed"`. Non-empty for
+      `state ∈ {held, conflict, resolved}`.
+
+  rule_based_segmentation:
+    type: object
+    additionalProperties: false
+    required: [segmenter, pin]
+    properties:
+      segmenter:
+        type: string
+        enum:
+          - clause-segmenter-v1
+          - clause-segmenter-v2
+        description: >
+          Identity of the rule-based pre-segmenter that produced the
+          candidate span set R consumed by both LLMs (Parse Spec §4.2.1).
+      pin:
+        type: string
+      candidate_count:
+        type: integer
+        minimum: 1
+        description: |R| — number of candidate spans submitted to both LLMs.
+
+  derived:
+    type: object
+    additionalProperties: false
+    description: >
+      Optional convenience fields. Validators MUST verify that these match
+      the canonical span / inheritance values; if they diverge, the unit is
+      a release blocker, not auto-corrected.
+    properties:
+      preview_text:
+        type: string
+        description: |
+          Slice of parent.text_verbatim covered by `span`, included as a
+          read-only convenience for reviewers. NEVER an authoritative copy.
+          Validators recompute and compare; mismatch = release blocker.
+      length:
+        type: integer
+        minimum: 1
+        description: span.end - span.start. Validators recompute.
+
+  provenance:
+    type: object
+    additionalProperties: false
+    required: [run_id, tools_lock_sha, computed_at]
+    properties:
+      run_id:        { type: string, format: uuid }
+      tools_lock_sha:{ type: string, pattern: "^[0-9a-f]{64}$" }
+      computed_at:   { type: string, format: date-time }
+
+# -----------------------------------------------------------------------------
+# 5. CROSS-FIELD INVARIANTS (validators MUST enforce)
+# -----------------------------------------------------------------------------
+
+invariants:
+
+  - id: AU-INV-01
+    description: >
+      `span` MUST satisfy 0 <= span[0] < span[1] <= len(parent.text_verbatim).
+      Validators MUST load the parent RecommendationRecordHTN to verify; the
+      parent's content_hash MUST match the hash recorded in the unit's
+      provenance to detect parent mutation.
+
+  - id: AU-INV-02
+    description: >
+      The substring parent.text_verbatim[span[0]:span[1]] MUST be a
+      contiguous, byte-exact substring; no whitespace stripping, no NFC
+      re-normalization at validation time. The parent already stored NFC.
+
+  - id: AU-INV-03
+    description: >
+      `kind` MUST be a member of AtomicUnitKind. Auto-coercion forbidden.
+
+  - id: AU-INV-04
+    description: >
+      `inherits_from` MUST equal `parent_recommendation_id`. The duplication
+      is intentional (see schema description); divergence is a release
+      blocker.
+
+  - id: AU-INV-05
+    description: >
+      `inherited_fields.acc_aha_cor` and `inherited_fields.acc_aha_loe` MUST
+      exact-equal the parent's `acc_aha_cor` and `acc_aha_loe`. NO atomic
+      unit may carry a different COR or LOE than its parent. Detection of
+      a mismatch MUST raise `atomicity-grade-conflict` and set
+      `state == "conflict"`. Auto-correction forbidden.
+
+  - id: AU-INV-06
+    description: >
+      `inherited_fields.section_path` MUST equal the parent's `section_path`
+      (array equality, item by item).
+
+  - id: AU-INV-07
+    description: >
+      `inherited_fields.references[]` MUST be a (possibly proper) subset of
+      the parent's `references[]`. A unit may cite fewer references than
+      the parent (when its span is narrower than the parent text), but it
+      MAY NOT cite a reference the parent does not.
+
+  - id: AU-INV-08
+    description: >
+      `inherited_fields.anchors_pdf_sha256`, `anchors_sair_sha256`, and
+      `anchors_page` MUST equal the parent's `anchors.pdf_sha256`,
+      `anchors.sair_sha256`, and `anchors.page` respectively.
+
+  - id: AU-INV-09
+    description: >
+      `proposers` MUST contain exactly two members; `proposers[0].family`
+      MUST NOT equal `proposers[1].family`. Same-family pairs are a release
+      blocker.
+
+  - id: AU-INV-10
+    description: >
+      In production runs, every proposer MUST have `temperature == 0.0`.
+      Non-zero temperature is permitted only when the run is explicitly
+      tagged as a fixture run in the build manifest; this is checked at
+      orchestrator level (`flow-hbp-2025-build`).
+
+  - id: AU-INV-11
+    description: >
+      `proposals[]` MUST have exactly two items, and `proposals[i].model`
+      MUST equal `proposers[i].model` for i in {0,1}.
+
+  - id: AU-INV-12
+    description: >
+      For every proposal, `proposals[i].span` MUST satisfy AU-INV-01 against
+      the parent text_verbatim, and `parent.text_verbatim[span[0]:span[1]]`
+      MUST be a substring (verified, not trusted).
+
+  - id: AU-INV-13
+    description: >
+      For `state == "agreed"`:
+        agreement.span_jaccard >= 0.95
+        agreement.kind_exact_equal == true
+        proposals[0].kind == proposals[1].kind
+        reconciliation == [] or all reconciliation entries resolved
+
+  - id: AU-INV-14
+    description: >
+      For `state == "held"`:
+        agreement.span_jaccard < 0.95 OR
+        agreement.kind_exact_equal == false OR
+        a structural validation failure occurred
+      AND `reconciliation` MUST contain at least one open
+      ReconciliationFlag of severity "blocking".
+
+  - id: AU-INV-15
+    description: >
+      For `state == "conflict"`:
+        a grade-conflict was detected (see AU-INV-05) OR a panel-chair
+        review was independently requested.
+      `reconciliation` MUST contain a ReconciliationFlag with kind
+      `grade-conflict`. Resolution requires panel-chair signoff (recorded
+      in the Gate 1 register, not in this schema).
+
+  - id: AU-INV-16
+    description: >
+      For `state == "resolved"`:
+        `reconciliation` MUST contain at least one resolved entry whose
+        FlaggedItem (referenced by `flagged_item_id`) has
+        `resolution_state ∈ {resolved-accept, resolved-edit}` and whose
+        `resolution.reviewer_ids` has length >= 2 (two-person rule).
+
+  - id: AU-INV-17
+    description: >
+      Atomic-recommendation spans within the same parent record MUST NOT
+      overlap each other in character offsets. Validators MUST detect
+      overlaps and BLOCK. Overlaps among modifier kinds (qualifier,
+      exclusion, monitoring, citation) and between a modifier kind and an
+      atomic-recommendation are permitted only when the source semantics
+      demand it (e.g., a citation marker embedded inside an atomic
+      recommendation), and validators MUST log such cases as `info`-severity
+      diagnostics.
+
+  - id: AU-INV-18
+    description: >
+      The union of all `atomic-recommendation` spans within a parent record
+      MUST cover at least one contiguous, non-empty substring of
+      text_verbatim. A parent with zero atomic-recommendation units is a
+      release blocker (an empty decomposition is never legal at Gate 1
+      exit).
+
+  - id: AU-INV-19
+    description: >
+      `derived.preview_text`, when present, MUST equal
+        parent.text_verbatim[span[0]:span[1]]
+      byte-for-byte. `derived.length`, when present, MUST equal
+        span[1] - span[0]
+      Mismatches are release blockers, not auto-corrected.
+
+  - id: AU-INV-20
+    description: >
+      `unit_id` MUST be deterministic per the formula in the schema
+      description. Re-runs with identical parent record, identical kind,
+      identical span boundaries, and identical tools_lock MUST produce the
+      same `unit_id`.
+
+  - id: AU-INV-21
+    description: >
+      `provenance.tools_lock_sha` MUST equal the SAIR/records tools_lock
+      lock_sha at the time the unit was computed. A tools_lock change MUST
+      regenerate all atomic units; carrying stale tools_lock_sha values is
+      a release blocker.
+
+  - id: AU-INV-22
+    description: >
+      Unit `state == "held"` does NOT block the parent record's COR/LOE/
+      verbatim advance through Gate 1 (the parent may advance with
+      `atomicity_state: held` recorded in its provenance), but downstream
+      skills that require atomicity MUST refuse to operate on a parent
+      with any `held` or `conflict` units.
+
+  - id: AU-INV-23
+    description: >
+      Validators MUST refuse to load a parent record whose
+      `provenance.atomicity.state` is `agreed` while any of its child
+      AtomicUnit instances are not in state `agreed` or `resolved`. The
+      states MUST be consistent at write-back time.
+
+  - id: AU-INV-24
+    description: >
+      The parent's `text_verbatim` is read-only. If a Gate 1 reviewer
+      proposes an `accept-with-edit` that alters parent.text_verbatim, ALL
+      child AtomicUnit instances MUST be deleted and re-computed from
+      scratch (new `unit_id`s, new spans, new proposals). Stale child units
+      attached to an edited parent are a release blocker.
+
+  - id: AU-INV-25
+    description: >
+      The parent's `acc_aha_cor` and `acc_aha_loe` are read-only at and
+      after Gate 1 (RecommendationRecord INV-07 forbids editing them).
+      Therefore inherited_fields.acc_aha_cor and acc_aha_loe are also
+      effectively read-only at and after Gate 1. Any drift triggers
+      AU-INV-05.
+
+# =============================================================================
+# 6. WORKED EXAMPLES (shape-correctness fixtures)
+# -----------------------------------------------------------------------------
+# These examples are illustrative shape-correctness fixtures. EVERY field whose
+# value can ONLY come from the published source PDF or the SME-attested parent
+# record is marked `HUMAN_FILL` with explicit instructions describing what
+# must be sourced and how. The pipeline refuses to operate on records
+# containing `HUMAN_FILL` tokens.
+#
+# Three examples are provided:
+#   6.1 An `agreed` atomic-recommendation unit (single-tuple sentence).
+#   6.2 A `held` unit with span-boundary disagreement awaiting reviewer.
+#   6.3 A `conflict` unit with `atomicity-grade-conflict` awaiting panel chair.
+# =============================================================================
+
+examples:
+
+  # ---------------------------------------------------------------------------
+  # 6.1 Agreed atomic-recommendation
+  # ---------------------------------------------------------------------------
+  - schema_version: "1.0.0"
+    unit_id: "au-HUMAN_FILL_16HEX"
+    parent_recommendation_id: "rec-HUMAN_FILL_16HEX"
+    inherits_from: "rec-HUMAN_FILL_16HEX"
+    kind: atomic-recommendation
+    span: [0, 0]   # HUMAN_FILL: [start, end] character offsets into the parent's text_verbatim
+    inherited_fields:
+      acc_aha_cor: "HUMAN_FILL_COR_VERBATIM_FROM_PARENT"   # exactly equal to parent
+      acc_aha_loe: "HUMAN_FILL_LOE_VERBATIM_FROM_PARENT"   # exactly equal to parent
+      section_path:
+        - "HUMAN_FILL: chapter heading"
+        - "HUMAN_FILL: subsection heading"
+      references:
+        - ref_id: "fn-HUMAN_FILL"
+          doi: null
+          pmid: null
+      anchors_pdf_sha256:  "HUMAN_FILL_64HEX"
+      anchors_sair_sha256: "HUMAN_FILL_64HEX"
+      anchors_page: 0    # HUMAN_FILL
+    proposers:
+      - { model: "claude-opus-4", pin: "HUMAN_FILL_PIN", family: anthropic, temperature: 0.0, seed: 0,    response_sha: "HUMAN_FILL_64HEX" }
+      - { model: "gpt-class-x",   pin: "HUMAN_FILL_PIN", family: openai,    temperature: 0.0, seed: null, response_sha: "HUMAN_FILL_64HEX" }
+    proposals:
+      - { model: "claude-opus-4", span: [0, 0], kind: atomic-recommendation }   # HUMAN_FILL: must be substring of parent.text_verbatim
+      - { model: "gpt-class-x",   span: [0, 0], kind: atomic-recommendation }   # HUMAN_FILL: same
+    agreement:
+      span_jaccard: 1.0
+      kind_exact_equal: true
+    state: agreed
+    reconciliation: []
+    rule_based_segmentation:
+      segmenter: clause-segmenter-v1
+      pin: "HUMAN_FILL_PIN"
+      candidate_count: 1
+    derived:
+      preview_text: "HUMAN_FILL: parent.text_verbatim[span[0]:span[1]] read-only convenience"
+      length: 0  # HUMAN_FILL: span[1] - span[0]
+    provenance:
+      run_id: "HUMAN_FILL_UUID"
+      tools_lock_sha: "HUMAN_FILL_64HEX"
+      computed_at: "HUMAN_FILL_ISO_DATETIME"
+
+  # ---------------------------------------------------------------------------
+  # 6.2 Held unit — span-boundary disagreement
+  # ---------------------------------------------------------------------------
+  - schema_version: "1.0.0"
+    unit_id: "au-HUMAN_FILL_16HEX"
+    parent_recommendation_id: "rec-HUMAN_FILL_16HEX"
+    inherits_from: "rec-HUMAN_FILL_16HEX"
+    kind: atomic-recommendation
+    span: [0, 0]   # HUMAN_FILL: the canonical span recorded by the orchestrator pending reviewer resolution
+    inherited_fields:
+      acc_aha_cor: "HUMAN_FILL_COR_VERBATIM_FROM_PARENT"
+      acc_aha_loe: "HUMAN_FILL_LOE_VERBATIM_FROM_PARENT"
+      section_path:
+        - "HUMAN_FILL: chapter"
+        - "HUMAN_FILL: subsection"
+      references: []
+      anchors_pdf_sha256:  "HUMAN_FILL_64HEX"
+      anchors_sair_sha256: "HUMAN_FILL_64HEX"
+      anchors_page: 0
+    proposers:
+      - { model: "claude-opus-4", pin: "HUMAN_FILL_PIN", family: anthropic, temperature: 0.0, seed: 0,    response_sha: "HUMAN_FILL_64HEX" }
+      - { model: "gpt-class-x",   pin: "HUMAN_FILL_PIN", family: openai,    temperature: 0.0, seed: null, response_sha: "HUMAN_FILL_64HEX" }
+    proposals:
+      # The two LLMs proposed slightly different boundaries for the same atomic
+      # recommendation; their spans overlap but Jaccard < 0.95.
+      - { model: "claude-opus-4", span: [0, 0], kind: atomic-recommendation }   # HUMAN_FILL: e.g., [12, 84]
+      - { model: "gpt-class-x",   span: [0, 0], kind: atomic-recommendation }   # HUMAN_FILL: e.g., [12, 96]
+    agreement:
+      span_jaccard: 0.0   # HUMAN_FILL: actual computed Jaccard < 0.95
+      kind_exact_equal: true
+    state: held
+    reconciliation:
+      - kind: span-boundary-disagreement
+        severity: blocking
+        opened_at: "HUMAN_FILL_ISO_DATETIME"
+        reason: |
+          HUMAN_FILL: e.g., "Models disagree on whether the trailing
+          qualifier 'when out-of-office BP measurement is available' is
+          part of the atomic recommendation or a separate qualifier span."
+        flagged_item_id: "flag-HUMAN_FILL_16HEX"
+    rule_based_segmentation:
+      segmenter: clause-segmenter-v1
+      pin: "HUMAN_FILL_PIN"
+      candidate_count: 0   # HUMAN_FILL: actual |R|
+    derived: {}
+    provenance:
+      run_id: "HUMAN_FILL_UUID"
+      tools_lock_sha: "HUMAN_FILL_64HEX"
+      computed_at: "HUMAN_FILL_ISO_DATETIME"
+
+  # ---------------------------------------------------------------------------
+  # 6.3 Conflict unit — atomicity-grade-conflict (panel-chair only)
+  # ---------------------------------------------------------------------------
+  - schema_version: "1.0.0"
+    unit_id: "au-HUMAN_FILL_16HEX"
+    parent_recommendation_id: "rec-HUMAN_FILL_16HEX"
+    inherits_from: "rec-HUMAN_FILL_16HEX"
+    kind: atomic-recommendation
+    span: [0, 0]
+    inherited_fields:
+      # NOTE: even though both LLMs proposed a span that *appears* to read as
+      # "Class III: Harm" within a parent labeled "I", the unit's
+      # inherited_fields MUST equal the parent verbatim. The conflict is
+      # surfaced via state=conflict and a reconciliation flag, never by
+      # rewriting the inherited COR/LOE.
+      acc_aha_cor: "HUMAN_FILL_COR_VERBATIM_FROM_PARENT"
+      acc_aha_loe: "HUMAN_FILL_LOE_VERBATIM_FROM_PARENT"
+      section_path:
+        - "HUMAN_FILL: chapter"
+        - "HUMAN_FILL: subsection"
+      references: []
+      anchors_pdf_sha256:  "HUMAN_FILL_64HEX"
+      anchors_sair_sha256: "HUMAN_FILL_64HEX"
+      anchors_page: 0
+    proposers:
+      - { model: "claude-opus-4", pin: "HUMAN_FILL_PIN", family: anthropic, temperature: 0.0, seed: 0,    response_sha: "HUMAN_FILL_64HEX" }
+      - { model: "gpt-class-x",   pin: "HUMAN_FILL_PIN", family: openai,    temperature: 0.0, seed: null, response_sha: "HUMAN_FILL_64HEX" }
+    proposals:
+      - { model: "claude-opus-4", span: [0, 0], kind: atomic-recommendation }
+      - { model: "gpt-class-x",   span: [0, 0], kind: atomic-recommendation }
+    agreement:
+      span_jaccard: 1.0
+      kind_exact_equal: true
+    state: conflict
+    reconciliation:
+      - kind: grade-conflict
+        severity: blocking
+        opened_at: "HUMAN_FILL_ISO_DATETIME"
+        reason: |
+          HUMAN_FILL: e.g., "The atomic-recommendation substring reads as a
+          'should not' clause, which would normally correspond to Class III:
+          Harm, but the parent recommendation is labeled Class I in the
+          source recommendation box. This is by definition a parsing or
+          reviewer-judgment matter (no_grade_reassignment rule). Routed to
+          panel chair."
+        flagged_item_id: "flag-HUMAN_FILL_16HEX"
+    rule_based_segmentation:
+      segmenter: clause-segmenter-v1
+      pin: "HUMAN_FILL_PIN"
+      candidate_count: 0
+    derived: {}
+    provenance:
+      run_id: "HUMAN_FILL_UUID"
+      tools_lock_sha: "HUMAN_FILL_64HEX"
+      computed_at: "HUMAN_FILL_ISO_DATETIME"
+
+# =============================================================================
+# 7. CHANGE CONTROL
+# -----------------------------------------------------------------------------
+# Any change to this schema (closed enums, atomicity policy, validation rules,
+# invariants, or example fixtures) requires:
+#   - A change-controlled diff with regression evaluation against the golden set.
+#   - Panel-chair signoff.
+#   - Increment of `schema_version` (semver: breaking = major).
+#   - Update of `last_reviewed`.
+#   - Coordinated update of every producing/consuming skill's `tools_lock`
+#     reference and acceptance test fixtures.
+#   - If the dual-LLM agreement threshold (0.95 Jaccard), the family-distinct
+#     rule, the no-free-text rule, the span-only rule, the no-grade-reassignment
+#     rule, or the read-only-text-verbatim rule is changed, the change MUST
+#     ALSO update ADR-HTN-001 D9 with a documented rationale and a new
+#     panel-chair signoff.
+# =============================================================================
+
+change_control:
+  semver: true
+  golden_set_regression_required: true
+  panel_chair_signoff_required: true
+  parent_schemas_to_update_on_breaking_change:
+    - cpg-htn-2025-acc-aha/schemas/recommendation-record-htn.yaml
+    - cpg-htn-2025-acc-aha/schemas/sair.yaml
+    - cpg-htn-2025-acc-aha/schemas/gate1-register.yaml
+  parent_skills_to_update_on_breaking_change:
+    - cpg-htn-2025-acc-aha/skills/extract-recommendation-cor-loe
+    - cpg-htn-2025-acc-aha/skills/pico-decompose-htn
+    - cpg-htn-2025-acc-aha/skills/extract-bp-thresholds
+    - cpg-htn-2025-acc-aha/skills/extract-pharm-rules
+    - cpg-htn-2025-acc-aha/skills/bind-htn-vocab
+    - cpg-htn-2025-acc-aha/skills/emit-fhir-plandefinition-htn
+    - cpg-htn-2025-acc-aha/skills/emit-cql-htn
+    - cpg-htn-2025-acc-aha/skills/safety-hbp
+  adr_amendment_required_for_threshold_changes:
+    threshold_jaccard: 0.95
+    family_distinct_rule: true
+    no_free_text_rule: true
+    span_only_rule: true
+    no_grade_reassignment_rule: true
+    read_only_text_verbatim_rule: true
+    adr_to_amend: ADR-HTN-001 D9

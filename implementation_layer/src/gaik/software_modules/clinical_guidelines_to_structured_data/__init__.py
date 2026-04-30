@@ -1,5 +1,11 @@
 """Clinical guideline documents to traceable structured knowledge."""
 
+from .contracts import (
+    ClinicalContractResource,
+    list_clinical_contract_resources,
+    list_missing_pending_chat_backlog_artifacts,
+    list_pending_chat_backlog_artifacts,
+)
 from .llm_leverage import (
     CliModelAccessTarget,
     LLMUsageDescriptor,
@@ -40,6 +46,10 @@ __all__ = [
     "ClinicalExtractionQualityIssue",
     "ClinicalExtractionQualityReport",
     "ClinicalSQLiteStore",
+    "ClinicalContractResource",
+    "list_clinical_contract_resources",
+    "list_pending_chat_backlog_artifacts",
+    "list_missing_pending_chat_backlog_artifacts",
     "CliModelAccessTarget",
     "LLMUsageDescriptor",
     "get_cli_model_access_targets",

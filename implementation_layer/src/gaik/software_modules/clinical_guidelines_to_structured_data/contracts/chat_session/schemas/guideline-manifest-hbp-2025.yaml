@@ -1,0 +1,1605 @@
+# =============================================================================
+# guideline-manifest-hbp-2025.yaml
+# -----------------------------------------------------------------------------
+# Per-build manifest for the cpg-htn-2025-acc-aha framework. This is the
+# single, top-of-build pin record that every other artifact in the pipeline
+# references via `guideline_manifest_ref`:
+#
+#   - schemas/sair.yaml                       (every SAIR document declares
+#                                              guideline_manifest_ref)
+#   - schemas/recommendation-record-htn.yaml  (every record declares
+#                                              guideline_manifest_ref)
+#   - schemas/atomic-unit.yaml                (transitively via parent record)
+#   - schemas/gate1-register.yaml             (every register declares
+#                                              guideline_manifest_ref;
+#                                              cohort signatures bind to it)
+#   - schemas/acc-aha-grading.yaml            (consults this manifest's
+#                                              source pin to confirm the
+#                                              grading-framework version
+#                                              used)
+#
+# This manifest pins, for one build:
+#
+#   1. The source identity triple: jurisdiction + effective date + semver,
+#      forming the build version label
+#      (e.g., "v1.0.0+ACC-AHA-2025+US+2026-04-30").
+#   2. Source PDFs and their roles (main guideline, executive summary, data
+#      supplement, predecessor 2017) with DOI, URL, SHA-256, publisher,
+#      publication date, and license terms.
+#   3. The supersession chain (predecessor 2017 → current 2025), with
+#      effective-date semantics and the mandatory `Communication` resource
+#      anchor for first-publish supersession.
+#   4. The publisher-agreed quote-extent envelope (verbatim character
+#      footprint allowed per page and per document, per publisher contract).
+#   5. The pinned RFC 3161 Time Stamp Authority (TSA) list used by Gate 1
+#      and downstream cryptographic envelopes.
+#   6. The tools_lock for the entire build (every parser, layout detector,
+#      VLM, OCR engine, LLM, FHIR validator, IG builder, and terminology
+#      server, version-pinned and SHA-fingerprinted).
+#   7. The grading-framework pin (which acc-aha-grading.yaml applies).
+#   8. The terminology-server pin (Ontoserver / HAPI / tx.fhir.org), with
+#      version-pinned SNOMED, LOINC, RxNorm, ICD-10-CM, CPT, UCUM editions.
+#   9. The risk-engine pin (AHA PREVENT) with calculator implementation
+#      identity and test vectors.
+#  10. The drift-watch configuration (publisher errata feed, CrossRef
+#      relations, refresh cadence).
+#  11. The PHI-scrub and copyright-quote-check policy in force.
+#  12. The jurisdiction and intended-use boundary (US adult outpatient HTN
+#      management; not pediatric, not non-US, not autonomous closed-loop).
+#
+# Posture: caution over velocity, fidelity over coverage. Everything that
+# can drift between builds is pinned. Anything not pinned is not built.
+# Auto-update is forbidden. Errata and version-drift trigger BLOCK; they
+# do not silently re-baseline.
+#
+# This manifest is itself signed by the medical director (or designate) at
+# Phase 0 architecture lock (per ADR-HTN-001 D1, D2). The signature binds
+# the build to its named human authority. Mutation requires a new manifest
+# version with `predecessor_manifest_version` set; old manifests are
+# retained immutably for audit.
+#
+# Authority:
+#   - ADR-HTN-001 D1 (framework name, locked)
+#   - ADR-HTN-001 D2 (single authoritative source: the 2025 ACC/AHA HBP
+#     Guideline PDF + supplement + executive summary; predecessor 2017
+#     ingested for supersession only)
+#   - ADR-HTN-001 D3 (native ACC/AHA grading preserved as primary)
+#   - ADR-HTN-001 D5 (PREVENT canonical risk function)
+#   - ADR-HTN-001 D8 (pregnancy hard-block enforced at order-select)
+#   - ADR-HTN-001 D9 (three non-overridable human gates)
+#   - ADR-HTN-001 D10 (PHI fail-closed; no override)
+#   - ADR-HTN-001 D11 (Synthea-only test data)
+#   - ADR-HTN-001 D13 (versioning: semver + jurisdiction + effective-date
+#     triple)
+#   - ADR-HTN-001 D14 (supersession of 2017; mandatory Communication
+#     resource on first publish)
+#   - ADR-HTN-001 D15 (drift detection on every build)
+#   - Parse + Extraction Phase Spec §0 (failure modes), §1 (architectural
+#     principles), §2.0 (pre-parse conditioning, including drift watch),
+#     §3.7 (SAIR root shape; references this manifest)
+#   - Parent framework rules: `god-session`, `human-authorization`,
+#     `native-ux-tools`
+#
+# Relationship to neighboring schemas (separate files, referenced by $ref):
+#   - schemas/sair.yaml
+#   - schemas/recommendation-record-htn.yaml
+#   - schemas/atomic-unit.yaml
+#   - schemas/gate1-register.yaml
+#   - schemas/acc-aha-grading.yaml
+# =============================================================================
+
+$schema: "https://json-schema.org/draft/2020-12/schema"
+$id: "https://aiwg.io/cpg-htn-2025-acc-aha/schemas/guideline-manifest-hbp-2025.yaml"
+title: "GuidelineManifestHBP2025"
+description: >
+  Per-build manifest pinning every element that can drift between builds:
+  source PDFs, supersession chain, quote envelope, TSA list, tools, grading
+  framework, terminology server, risk engine, drift-watch, PHI/copyright
+  policy, jurisdiction, and intended use. Signed by the medical director
+  at Phase 0. Referenced by every artifact in the build via
+  `guideline_manifest_ref`.
+version: "1.0.0"
+schema_lifecycle: stable
+last_reviewed: "HUMAN_FILL: ISO-8601 date of most recent panel review of this schema"
+authority:
+  adr: ADR-HTN-001
+  framework: cpg-htn-2025-acc-aha
+  parent_framework: aiwg-training
+license: MIT
+
+# -----------------------------------------------------------------------------
+# 1. POLICY (normative)
+# -----------------------------------------------------------------------------
+
+policy:
+
+  source_admission:
+    rule: >
+      The framework admits exactly four source documents per manifest
+      version: (a) the 2025 ACC/AHA HBP Guideline main document; (b) its
+      data supplement; (c) its executive summary; (d) the 2017 ACC/AHA HBP
+      Guideline as the supersession predecessor. Any other document
+      (ESC/ESH, ISH, KDIGO, board-review banks, lay summaries) is rejected
+      at ingest by the `acquire-hbp-2025-source` skill.
+
+  versioning_triple:
+    rule: >
+      Every build version label is of the form
+        "v<semver>+ACC-AHA-2025+<jurisdiction>+<effective_date>"
+      For example: "v1.0.0+ACC-AHA-2025+US+2026-04-30".
+      All three components are required. `<jurisdiction>` is "US" by
+      default because the source is US-jurisdictional; non-US adaptation
+      is out of scope per ADR-HTN-001.
+
+  supersession:
+    rule: >
+      The 2017 ACC/AHA HBP Guideline is recorded as predecessor. On first
+      publish of any build derived from this manifest, the
+      `dataset-publication-agent` MUST emit a FHIR `Communication` resource
+      announcing supersession of the 2017 version, with effective-date
+      equal to the build's effective_date. Failure to emit is a release
+      blocker.
+
+  quote_envelope:
+    rule: >
+      Every verbatim quotation of source text counts toward the
+      publisher-agreed envelope. The envelope is enforced cumulatively
+      across the full build's RecommendationRecord set + any other
+      verbatim-bearing artifact (Guideline Card, Safety Case, retraction
+      notice). Exceeding the envelope is a release blocker; legal counsel
+      review is required to amend the envelope, and amendment requires a
+      new manifest version.
+
+  errata_watch:
+    rule: >
+      The publisher errata feed and the CrossRef
+      `relation: is-corrected-by` queries MUST be polled on every build at
+      Phase 0. Any unreviewed erratum is a release blocker. Reviewed
+      errata require a new manifest version with the erratum recorded as a
+      drift event and SME-acknowledged.
+
+  no_auto_update:
+    rule: >
+      Source PDFs MUST NOT be auto-updated. A SHA-256 mismatch against the
+      pin BLOCKS the build and emits a `version-drift` report. New source
+      bytes require a new manifest version with explicit predecessor
+      reference and panel-chair acknowledgement.
+
+  pinning_completeness:
+    rule: >
+      Every tool, model, and external service used anywhere in the
+      pipeline MUST appear in this manifest's tools_lock or
+      external_services with a version pin and (where applicable) a SHA-256
+      fingerprint. If a tool is invoked at runtime that is not pinned in
+      this manifest, the run BLOCKS at the orchestrator preflight step.
+
+  jurisdictional_scope:
+    rule: >
+      The build's CDS Hooks services and Implementation Guide declare
+      jurisdiction == "US". Deployment outside the US is out of scope and
+      not certified by this manifest. The Guideline Card displays the
+      jurisdiction prominently; the EHR jurisdiction gate is a deployer
+      responsibility, not the framework's.
+
+  intended_use_boundary:
+    rule: >
+      Intended use is clinical decision support for adult outpatient HTN
+      management in US settings. Pediatric, autonomous closed-loop dose
+      adjustment, and any setting without licensed clinician review are
+      explicitly out of scope and forbidden by the manifest. CDS Hooks
+      services include an age >= 18 gate; pediatric invocation returns no
+      suggestions and an explicit out-of-scope notice.
+
+  phi_failclosed:
+    rule: >
+      PHI scrub failures (any positive detection) BLOCK the build. No
+      `--allow-phi` override exists in the orchestrator. Real patient data
+      is rejected at ingest by hash-fingerprint check; only Synthea is
+      permitted as test data (ADR-HTN-001 D11).
+
+  signature_algorithms:
+    rule: >
+      Allowed signature algorithms for the medical director's manifest
+      signature and downstream cohort signatures are pinned in the
+      `signature_policy` block; new algorithms require a manifest version
+      bump and ADR-HTN-001 amendment.
+
+# -----------------------------------------------------------------------------
+# 2. CLOSED ENUMERATIONS
+# -----------------------------------------------------------------------------
+
+$defs:
+
+  # ---------------------------------------------------------------------------
+  # 2.1 Document role
+  # ---------------------------------------------------------------------------
+  DocumentRole:
+    type: string
+    enum:
+      - main-guideline
+      - executive-summary
+      - supplement
+      - predecessor-2017
+
+  # ---------------------------------------------------------------------------
+  # 2.2 Jurisdiction
+  # ---------------------------------------------------------------------------
+  Jurisdiction:
+    type: string
+    enum:
+      - US
+    description: >
+      Closed at "US" for this manifest; per ADR-HTN-001, non-US
+      jurisdictional adaptation is out of scope. Future jurisdictional
+      framework forks MUST be named separately (e.g.,
+      `cpg-htn-2025-acc-aha-uk`).
+
+  # ---------------------------------------------------------------------------
+  # 2.3 License terms (declared by publisher contract)
+  # ---------------------------------------------------------------------------
+  LicenseSPDX:
+    type: string
+    enum:
+      - "All-Rights-Reserved-Publisher"
+      - "CC-BY-4.0"
+      - "CC-BY-NC-4.0"
+      - "CC-BY-SA-4.0"
+      - "CC-BY-ND-4.0"
+      - "Other-Negotiated-Envelope"
+    description: >
+      The 2025 ACC/AHA HBP Guideline is published under publisher copyright
+      with a negotiated quotation envelope, NOT a permissive license. The
+      "Other-Negotiated-Envelope" value is the expected production value.
+      Any other value requires legal counsel signoff.
+
+  # ---------------------------------------------------------------------------
+  # 2.4 Tool kinds
+  # ---------------------------------------------------------------------------
+  ToolKind:
+    type: string
+    enum:
+      - pdf-parser
+      - pdf-validator
+      - layout-detector
+      - table-engine
+      - vlm
+      - ocr
+      - llm
+      - rule-segmenter
+      - figure-parser
+      - chart-parser
+      - terminology-server
+      - fhir-validator
+      - ig-builder
+      - cql-runtime
+      - synthea
+      - phi-scrubber
+      - cryptographic-tsp
+      - kms
+      - other
+
+  # ---------------------------------------------------------------------------
+  # 2.5 Risk engine
+  # ---------------------------------------------------------------------------
+  RiskEngineName:
+    type: string
+    enum: [PREVENT, PCE-legacy]
+
+  # ---------------------------------------------------------------------------
+  # 2.6 Manifest lifecycle
+  # ---------------------------------------------------------------------------
+  ManifestState:
+    type: string
+    enum:
+      - draft
+      - pending-medical-director
+      - active
+      - superseded
+      - withdrawn
+
+  # ---------------------------------------------------------------------------
+  # 2.7 Drift event kinds
+  # ---------------------------------------------------------------------------
+  DriftEventKind:
+    type: string
+    enum:
+      - source-sha-mismatch
+      - source-url-changed
+      - errata-published
+      - corrigendum-published
+      - terminology-edition-changed
+      - tools-lock-changed
+      - tsa-cert-rotated
+
+# -----------------------------------------------------------------------------
+# 3. STRUCTURED TYPES
+# -----------------------------------------------------------------------------
+
+  # ---------------------------------------------------------------------------
+  # 3.1 SourceDocument — pinned identity for one of the four source PDFs
+  # ---------------------------------------------------------------------------
+  SourceDocument:
+    type: object
+    additionalProperties: false
+    required:
+      - role
+      - title
+      - publisher
+      - publication_date
+      - doi
+      - url
+      - pdf_path
+      - pdf_sha256
+      - page_count
+      - license
+    properties:
+      role:               { $ref: "#/$defs/DocumentRole" }
+      title:              { type: string, minLength: 1 }
+      publisher:          { type: string, minLength: 1 }
+      publication_date:   { type: string, format: date }
+      doi:                { type: string, pattern: "^10\\..+/.+$" }
+      url:                { type: [string, "null"], format: uri }
+      pdf_path:
+        type: string
+        description: Relative path under raw/<source-id>/ to the immutable source byte stream.
+      pdf_sha256:
+        type: string
+        pattern: "^[0-9a-f]{64}$"
+        description: SHA-256 of the original publisher-delivered PDF, BEFORE any conditioning.
+      conditioned_pdf_path:
+        type: [string, "null"]
+        description: Relative path to the conditioned PDF (post Phase 2.0.3). Set after pre-parse.
+      conditioned_pdf_sha256:
+        type: [string, "null"]
+        pattern: "^[0-9a-f]{64}$"
+      page_count:         { type: integer, minimum: 1 }
+      license:
+        type: object
+        additionalProperties: false
+        required: [spdx, contract_uri, contract_signed_at, copyright_holder]
+        properties:
+          spdx:               { $ref: "#/$defs/LicenseSPDX" }
+          contract_uri:
+            type: string
+            format: uri
+            description: >
+              Pointer to the publisher contract or license-grant document
+              that authorizes the framework's use of the source PDF and
+              defines the quote envelope below. Required for every source.
+          contract_signed_at: { type: string, format: date-time }
+          copyright_holder:   { type: string, minLength: 1 }
+      crossref_relations:
+        type: array
+        items:
+          type: object
+          additionalProperties: false
+          required: [relation, target_doi]
+          properties:
+            relation: { type: string, description: "CrossRef relation type, e.g., is-corrected-by." }
+            target_doi: { type: string, pattern: "^10\\..+/.+$" }
+            note: { type: [string, "null"] }
+      errata_feed:
+        type: [object, "null"]
+        additionalProperties: false
+        required: [feed_url, feed_kind, last_polled_at]
+        properties:
+          feed_url:        { type: string, format: uri }
+          feed_kind:
+            type: string
+            enum: [rss, atom, json, crossref-api, publisher-api]
+          last_polled_at:  { type: string, format: date-time }
+          last_known_etag: { type: [string, "null"] }
+          last_known_hash: { type: [string, "null"], pattern: "^[0-9a-f]{64}$" }
+
+  # ---------------------------------------------------------------------------
+  # 3.2 SupersessionChain — predecessor 2017 → current 2025
+  # ---------------------------------------------------------------------------
+  SupersessionChain:
+    type: object
+    additionalProperties: false
+    required:
+      - predecessor_role
+      - predecessor_doi
+      - predecessor_pdf_sha256
+      - predecessor_publication_date
+      - effective_supersession_date
+      - communication_resource
+    properties:
+      predecessor_role:                { $ref: "#/$defs/DocumentRole" }
+      predecessor_doi:                 { type: string, pattern: "^10\\..+/.+$" }
+      predecessor_pdf_sha256:          { type: string, pattern: "^[0-9a-f]{64}$" }
+      predecessor_publication_date:    { type: string, format: date }
+      effective_supersession_date:
+        type: string
+        format: date
+        description: >
+          Effective date on which the 2025 build supersedes the 2017
+          predecessor for downstream consumers. By default equals the
+          manifest's effective_date.
+      communication_resource:
+        type: object
+        additionalProperties: false
+        required: [resource_path, status, intent, payload_summary]
+        properties:
+          resource_path:
+            type: string
+            description: >
+              Relative path where the FHIR `Communication` resource is
+              emitted at first publish (e.g.,
+              "fhir/Communication/htn-2025-supersedes-2017.json").
+          status:        { type: string, enum: [preparation, in-progress, completed] }
+          intent:        { type: string, enum: [order, plan, proposal] }
+          payload_summary:
+            type: string
+            minLength: 1
+            description: One-paragraph human-readable summary of the supersession notice.
+      mapping_advisory_only:
+        type: boolean
+        const: true
+        description: >
+          Per ADR-HTN-001 D14, predecessor mapping is advisory only and
+          never substitutes for source-text fidelity. This boolean is
+          locked true.
+
+  # ---------------------------------------------------------------------------
+  # 3.3 QuoteEnvelope — publisher-agreed quotation footprint
+  # ---------------------------------------------------------------------------
+  QuoteEnvelope:
+    type: object
+    additionalProperties: false
+    required:
+      - envelope_id
+      - contract_uri
+      - chars_per_page_max
+      - chars_per_document_max
+      - figures_quotable
+      - tables_quotable
+      - attribution_required
+      - acknowledgement_text
+    properties:
+      envelope_id:
+        type: string
+        pattern: "^env-[0-9a-f]{16}$"
+        description: Stable envelope identifier; recorded on every RecommendationRecord under copyright_envelope.envelope_version.
+      contract_uri:        { type: string, format: uri }
+      chars_per_page_max:
+        type: integer
+        minimum: 0
+        description: >
+          Maximum verbatim character footprint per source page across all
+          framework-produced artifacts. Cumulative; enforced by the
+          `copyright-quote-check-acc-aha` skill at Phase 9.
+      chars_per_document_max:
+        type: integer
+        minimum: 0
+        description: Maximum verbatim character footprint across the entire build, summed.
+      figures_quotable:
+        type: boolean
+        description: >
+          Whether figures may be reproduced verbatim. Default false; per
+          ADR-HTN-001, figures and tables are excluded by default and
+          require explicit publisher signoff to enable.
+      tables_quotable:
+        type: boolean
+        description: Same default as figures_quotable.
+      attribution_required:
+        type: boolean
+        const: true
+      acknowledgement_text:
+        type: string
+        minLength: 1
+        description: >
+          Verbatim acknowledgement string that MUST appear on every artifact
+          containing source quotations (e.g., Guideline Card, Safety Case,
+          IG `description`).
+      legal_counsel_signoff:
+        type: object
+        additionalProperties: false
+        required: [counsel_name, organization, signed_at, signature_uri]
+        properties:
+          counsel_name:    { type: string, minLength: 1 }
+          organization:    { type: string, minLength: 1 }
+          signed_at:       { type: string, format: date-time }
+          signature_uri:
+            type: string
+            format: uri
+            description: Pointer to the signed legal-counsel attestation document.
+
+  # ---------------------------------------------------------------------------
+  # 3.4 TSA — pinned RFC 3161 Time Stamp Authority
+  # ---------------------------------------------------------------------------
+  TSA:
+    type: object
+    additionalProperties: false
+    required:
+      - tsa_name
+      - tsa_url
+      - tsa_cert_pem
+      - tsa_cert_fingerprint_sha256
+      - cert_valid_from
+      - cert_valid_until
+      - hash_alg_supported
+    properties:
+      tsa_name:                       { type: string, minLength: 1 }
+      tsa_url:                        { type: string, format: uri }
+      tsa_cert_pem:
+        type: string
+        description: PEM-encoded certificate of the TSA's signing key.
+      tsa_cert_fingerprint_sha256:    { type: string, pattern: "^[0-9a-f]{64}$" }
+      cert_valid_from:                { type: string, format: date-time }
+      cert_valid_until:               { type: string, format: date-time }
+      hash_alg_supported:
+        type: array
+        minItems: 1
+        items: { type: string, enum: [SHA-256, SHA-384, SHA-512] }
+      added_at:                       { type: string, format: date-time }
+      rotated_from:
+        type: [string, "null"]
+        pattern: "^[0-9a-f]{64}$"
+        description: When this TSA cert replaces a predecessor, the predecessor fingerprint.
+
+  # ---------------------------------------------------------------------------
+  # 3.5 Tool — single tools_lock entry
+  # ---------------------------------------------------------------------------
+  Tool:
+    type: object
+    additionalProperties: false
+    required: [name, kind, pin]
+    properties:
+      name:           { type: string, minLength: 1 }
+      kind:           { $ref: "#/$defs/ToolKind" }
+      pin:
+        type: string
+        minLength: 1
+        description: Vendor/version pin string (e.g., "1.24.5", "@2026-03-15").
+      sha256:
+        type: [string, "null"]
+        pattern: "^[0-9a-f]{64}$"
+        description: SHA-256 of the tool binary or model weights when fetchable.
+      provenance_uri:
+        type: [string, "null"]
+        format: uri
+        description: Pointer to the source/release artifact for this pin.
+      deterministic:
+        type: boolean
+        description: >
+          If false, this tool MUST NOT be the SOLE basis for any consensus
+          state; the orchestrator enforces this rule.
+      api_contract:
+        type: [string, "null"]
+        description: >
+          When the tool is a remote API, the contract identifier (vendor
+          API version) and any deterministic-mode evidence text.
+      notes:          { type: [string, "null"] }
+
+  # ---------------------------------------------------------------------------
+  # 3.6 ExternalService — non-tool external dependencies
+  # ---------------------------------------------------------------------------
+  ExternalService:
+    type: object
+    additionalProperties: false
+    required: [name, kind, endpoint_uri, version_or_release, fingerprint_or_pin]
+    properties:
+      name:                  { type: string, minLength: 1 }
+      kind:
+        type: string
+        enum:
+          - terminology-server
+          - publisher-doi-resolver
+          - crossref-api
+          - errata-feed
+          - kms
+          - tsp
+          - synthea-distribution
+          - other
+      endpoint_uri:          { type: string, format: uri }
+      version_or_release:    { type: string, minLength: 1 }
+      fingerprint_or_pin:    { type: string, minLength: 1 }
+      auth_method:
+        type: string
+        enum: [mtls, oauth2-client-credentials, api-key, none, other]
+      sla_uri:               { type: [string, "null"], format: uri }
+
+  # ---------------------------------------------------------------------------
+  # 3.7 TerminologyEditionPin — version pins for vocabularies
+  # ---------------------------------------------------------------------------
+  TerminologyEditionPin:
+    type: object
+    additionalProperties: false
+    required: [vocabulary, edition_label, edition_date, server_uri]
+    properties:
+      vocabulary:
+        type: string
+        enum:
+          - SNOMED-CT-International
+          - SNOMED-CT-US-Edition
+          - LOINC
+          - RxNorm
+          - ICD-10-CM
+          - CPT
+          - UCUM
+          - HL7-Terminology
+      edition_label:         { type: string, minLength: 1, description: "Publisher's edition label, e.g., '2026-03-01'." }
+      edition_date:          { type: string, format: date }
+      server_uri:            { type: string, format: uri }
+      affiliate_license_uri:
+        type: [string, "null"]
+        format: uri
+        description: For SNOMED CT US Edition, the affiliate license document.
+
+  # ---------------------------------------------------------------------------
+  # 3.8 RiskEnginePin — PREVENT (canonical) and optional PCE-legacy reference
+  # ---------------------------------------------------------------------------
+  RiskEnginePin:
+    type: object
+    additionalProperties: false
+    required: [name, implementation, pin, test_vectors_uri]
+    properties:
+      name:               { $ref: "#/$defs/RiskEngineName" }
+      implementation:
+        type: string
+        minLength: 1
+        description: Implementation identifier (e.g., "aha-prevent-reference-v1").
+      pin:                { type: string, minLength: 1 }
+      sha256:             { type: [string, "null"], pattern: "^[0-9a-f]{64}$" }
+      test_vectors_uri:
+        type: string
+        format: uri
+        description: >
+          Pointer to the test-vector pack used to validate this risk-engine
+          implementation; `cql-test-synthea-htn` MUST verify all vectors at
+          build time.
+      legacy_only:
+        type: boolean
+        description: True when name == "PCE-legacy"; per ADR-HTN-001 D5, never feeds CQL/CDS Hooks.
+
+  # ---------------------------------------------------------------------------
+  # 3.9 PHIScrubPolicy
+  # ---------------------------------------------------------------------------
+  PHIScrubPolicy:
+    type: object
+    additionalProperties: false
+    required: [detectors, fail_closed, allow_override]
+    properties:
+      detectors:
+        type: array
+        minItems: 3
+        items: { type: string, enum: [presidio, spacy-med7, regex-us, custom] }
+      fail_closed:    { type: boolean, const: true }
+      allow_override: { type: boolean, const: false }
+      hazard_handler_uri:
+        type: string
+        format: uri
+        description: Pointer to the runbook for handling positive PHI detections.
+
+  # ---------------------------------------------------------------------------
+  # 3.10 SignaturePolicy
+  # ---------------------------------------------------------------------------
+  SignaturePolicy:
+    type: object
+    additionalProperties: false
+    required: [allowed_algorithms, manifest_signature_required, kms_uri]
+    properties:
+      allowed_algorithms:
+        type: array
+        minItems: 1
+        items: { type: string, enum: [Ed25519, ECDSA-P256-SHA256] }
+      manifest_signature_required: { type: boolean, const: true }
+      kms_uri:
+        type: string
+        format: uri
+        description: Pointer to the institutional KMS providing keys.
+
+  # ---------------------------------------------------------------------------
+  # 3.11 DriftEvent
+  # ---------------------------------------------------------------------------
+  DriftEvent:
+    type: object
+    additionalProperties: false
+    required: [event_id, kind, detected_at, summary, action_taken]
+    properties:
+      event_id:        { type: string, pattern: "^drift-[0-9a-f]{16}$" }
+      kind:            { $ref: "#/$defs/DriftEventKind" }
+      detected_at:     { type: string, format: date-time }
+      summary:         { type: string, minLength: 1 }
+      affected_source_doi: { type: [string, "null"] }
+      action_taken:
+        type: string
+        enum:
+          - blocked-build
+          - opened-new-manifest-version
+          - sme-acknowledged-no-impact
+          - panel-chair-deferred
+      action_taken_at: { type: [string, "null"], format: date-time }
+      action_taken_by: { type: [string, "null"] }
+      prov_activity_id: { type: [string, "null"] }
+
+  # ---------------------------------------------------------------------------
+  # 3.12 IntendedUse
+  # ---------------------------------------------------------------------------
+  IntendedUse:
+    type: object
+    additionalProperties: false
+    required: [statement, in_scope, out_of_scope, age_min_inclusive, requires_clinician_review]
+    properties:
+      statement:
+        type: string
+        minLength: 1
+        description: One-paragraph intended-use statement (recorded verbatim on the Guideline Card).
+      in_scope:
+        type: array
+        items: { type: string }
+      out_of_scope:
+        type: array
+        minItems: 3
+        items: { type: string }
+        description: >
+          Closed-by-policy explicit out-of-scope list. Default content
+          includes "pediatric (<18 years)", "non-US deployment", and
+          "autonomous closed-loop dose adjustment".
+      age_min_inclusive:
+        type: integer
+        const: 18
+        description: CDS Hooks services include an age >= 18 gate; pediatric invocation returns no suggestions.
+      requires_clinician_review:
+        type: boolean
+        const: true
+
+  # ---------------------------------------------------------------------------
+  # 3.13 MedicalDirectorSignoff (Phase 0 architecture lock)
+  # ---------------------------------------------------------------------------
+  MedicalDirectorSignoff:
+    type: object
+    additionalProperties: false
+    required:
+      - director_name
+      - institution
+      - signed_at
+      - manifest_payload_sha256
+      - signature_b64
+      - signature_algorithm
+      - time_stamp
+    properties:
+      director_name:           { type: string, minLength: 1 }
+      institution:             { type: string, minLength: 1 }
+      signed_at:               { type: string, format: date-time }
+      manifest_payload_sha256:
+        type: string
+        pattern: "^[0-9a-f]{64}$"
+        description: >
+          SHA-256 over the JCS-canonical form of this manifest with the
+          `medical_director_signoff` field excluded at signing time.
+      signature_b64:           { type: string, description: Base64 of the signature. }
+      signature_algorithm:     { type: string, enum: [Ed25519, ECDSA-P256-SHA256] }
+      key_id:                  { type: string, minLength: 1 }
+      time_stamp:
+        type: object
+        additionalProperties: false
+        required: [tsa_cert_fingerprint_sha256, time, token_b64]
+        properties:
+          tsa_cert_fingerprint_sha256: { type: string, pattern: "^[0-9a-f]{64}$" }
+          time:                        { type: string, format: date-time }
+          token_b64:                   { type: string }
+
+# -----------------------------------------------------------------------------
+# 4. ROOT TYPE — GuidelineManifestHBP2025
+# -----------------------------------------------------------------------------
+type: object
+additionalProperties: false
+required:
+  - schema_version
+  - manifest_id
+  - manifest_version
+  - state
+  - framework_name
+  - jurisdiction
+  - effective_date
+  - build_version_label
+  - sources
+  - supersession
+  - quote_envelope
+  - tsa_list
+  - tools_lock
+  - external_services
+  - terminology
+  - risk_engine
+  - grading_framework_pin
+  - phi_scrub_policy
+  - signature_policy
+  - intended_use
+  - errata_watch
+  - drift_events
+  - audit_log
+  - fixity
+  - medical_director_signoff
+properties:
+
+  schema_version:
+    type: string
+    const: "1.0.0"
+
+  manifest_id:
+    type: string
+    pattern: "^manifest-[0-9a-f]{16}$"
+    description: >
+      Stable, deterministic ID for this manifest (truncated SHA-256 over
+      framework_name + jurisdiction + effective_date + manifest_version).
+
+  manifest_version:
+    type: string
+    pattern: "^[0-9]+\\.[0-9]+\\.[0-9]+$"
+    description: Semver of this manifest instance.
+
+  predecessor_manifest_version:
+    type: [string, "null"]
+    pattern: "^[0-9]+\\.[0-9]+\\.[0-9]+$|^null$"
+    description: Required when this manifest supersedes a prior version.
+
+  state:                  { $ref: "#/$defs/ManifestState" }
+
+  framework_name:
+    type: string
+    const: "cpg-htn-2025-acc-aha"
+
+  jurisdiction:           { $ref: "#/$defs/Jurisdiction" }
+
+  effective_date:
+    type: string
+    format: date
+    description: >
+      Effective date for builds derived from this manifest. Used to compose
+      `build_version_label` and to set the supersession effective date.
+
+  build_version_label:
+    type: string
+    pattern: "^v[0-9]+\\.[0-9]+\\.[0-9]+\\+ACC-AHA-2025\\+US\\+[0-9]{4}-[0-9]{2}-[0-9]{2}$"
+    description: >
+      Composed from manifest_version + framework era + jurisdiction +
+      effective_date. Validators MUST recompute and compare.
+
+  # ---------------------------------------------------------------------------
+  # 4.1 Sources (the four pinned PDFs)
+  # ---------------------------------------------------------------------------
+  sources:
+    type: array
+    minItems: 4
+    maxItems: 4
+    items: { $ref: "#/$defs/SourceDocument" }
+    description: >
+      Exactly four sources required, with roles main-guideline,
+      executive-summary, supplement, predecessor-2017.
+
+  # ---------------------------------------------------------------------------
+  # 4.2 Supersession chain
+  # ---------------------------------------------------------------------------
+  supersession:           { $ref: "#/$defs/SupersessionChain" }
+
+  # ---------------------------------------------------------------------------
+  # 4.3 Quote envelope (publisher-agreed)
+  # ---------------------------------------------------------------------------
+  quote_envelope:         { $ref: "#/$defs/QuoteEnvelope" }
+
+  # ---------------------------------------------------------------------------
+  # 4.4 Pinned TSA list
+  # ---------------------------------------------------------------------------
+  tsa_list:
+    type: array
+    minItems: 1
+    items: { $ref: "#/$defs/TSA" }
+    description: >
+      RFC 3161 TSAs whose time-stamp tokens are accepted by Gate 1 and
+      downstream cryptographic envelopes. New TSAs added after a signoff
+      are not retroactively valid for that signoff (G1-INV-25).
+
+  # ---------------------------------------------------------------------------
+  # 4.5 Tools lock
+  # ---------------------------------------------------------------------------
+  tools_lock:
+    type: object
+    additionalProperties: false
+    required: [lock_sha, items]
+    properties:
+      lock_sha:
+        type: string
+        pattern: "^[0-9a-f]{64}$"
+        description: SHA-256 over the JCS-canonical form of `items`.
+      items:
+        type: array
+        minItems: 1
+        items: { $ref: "#/$defs/Tool" }
+      llm_pair:
+        type: array
+        minItems: 2
+        maxItems: 2
+        items: { type: string }
+        description: >
+          The two LLM pin strings (must reference items[].pin) used by
+          `extract-recommendation-cor-loe` for atomicity decomposition.
+          Validators MUST verify the two LLMs are from distinct families.
+      vlm:
+        type: string
+        description: The VLM pin string used for triple-modal consensus extractor V.
+      ocr_engines:
+        type: array
+        minItems: 3
+        items: { type: string }
+        description: OCR engine pin strings used for triple-modal consensus extractor O.
+
+  # ---------------------------------------------------------------------------
+  # 4.6 External services
+  # ---------------------------------------------------------------------------
+  external_services:
+    type: array
+    items: { $ref: "#/$defs/ExternalService" }
+
+  # ---------------------------------------------------------------------------
+  # 4.7 Terminology editions
+  # ---------------------------------------------------------------------------
+  terminology:
+    type: array
+    minItems: 6
+    items: { $ref: "#/$defs/TerminologyEditionPin" }
+    description: >
+      Required vocabularies: SNOMED-CT-International, SNOMED-CT-US-Edition,
+      LOINC, RxNorm, ICD-10-CM, UCUM. CPT optional but recommended for E/M
+      and self-measured BP codes (99473/99474).
+
+  # ---------------------------------------------------------------------------
+  # 4.8 Risk engine
+  # ---------------------------------------------------------------------------
+  risk_engine:
+    type: array
+    minItems: 1
+    maxItems: 2
+    items: { $ref: "#/$defs/RiskEnginePin" }
+    description: >
+      Exactly one entry with name == "PREVENT" is required. An optional
+      second entry with name == "PCE-legacy" may be present for advisory
+      comparison; per ADR-HTN-001 D5, PCE-legacy never feeds CQL/CDS Hooks.
+
+  # ---------------------------------------------------------------------------
+  # 4.9 Grading-framework pin (which acc-aha-grading.yaml applies)
+  # ---------------------------------------------------------------------------
+  grading_framework_pin:
+    type: object
+    additionalProperties: false
+    required: [schema_uri, schema_sha256, framework_version_label]
+    properties:
+      schema_uri:
+        type: string
+        format: uri
+        description: Reference to the acc-aha-grading.yaml file in force.
+      schema_sha256:
+        type: string
+        pattern: "^[0-9a-f]{64}$"
+      framework_version_label:
+        type: string
+        const: "2015-update-as-reaffirmed-in-2025-HBP-guideline"
+
+  # ---------------------------------------------------------------------------
+  # 4.10 PHI scrub policy
+  # ---------------------------------------------------------------------------
+  phi_scrub_policy:       { $ref: "#/$defs/PHIScrubPolicy" }
+
+  # ---------------------------------------------------------------------------
+  # 4.11 Signature policy
+  # ---------------------------------------------------------------------------
+  signature_policy:       { $ref: "#/$defs/SignaturePolicy" }
+
+  # ---------------------------------------------------------------------------
+  # 4.12 Intended-use boundary
+  # ---------------------------------------------------------------------------
+  intended_use:           { $ref: "#/$defs/IntendedUse" }
+
+  # ---------------------------------------------------------------------------
+  # 4.13 Errata-watch configuration
+  # ---------------------------------------------------------------------------
+  errata_watch:
+    type: object
+    additionalProperties: false
+    required: [poll_cadence_iso8601, last_polled_at, blockers_open]
+    properties:
+      poll_cadence_iso8601:
+        type: string
+        pattern: "^P.*$"
+        description: ISO-8601 duration (e.g., "P1D", "PT6H").
+      last_polled_at:      { type: string, format: date-time }
+      blockers_open:
+        type: array
+        items:
+          type: object
+          additionalProperties: false
+          required: [opened_at, source_doi, summary]
+          properties:
+            opened_at:    { type: string, format: date-time }
+            source_doi:   { type: string, pattern: "^10\\..+/.+$" }
+            summary:      { type: string, minLength: 1 }
+            erratum_uri:  { type: [string, "null"], format: uri }
+
+  # ---------------------------------------------------------------------------
+  # 4.14 Drift events history
+  # ---------------------------------------------------------------------------
+  drift_events:
+    type: array
+    items: { $ref: "#/$defs/DriftEvent" }
+
+  # ---------------------------------------------------------------------------
+  # 4.15 Audit log (append-only)
+  # ---------------------------------------------------------------------------
+  audit_log:
+    type: array
+    items:
+      type: object
+      additionalProperties: false
+      required: [event_id, occurred_at, kind, actor_id, payload_sha256]
+      properties:
+        event_id:        { type: string, pattern: "^evt-[0-9a-f]{16}$" }
+        occurred_at:     { type: string, format: date-time }
+        kind:
+          type: string
+          enum:
+            - manifest-drafted
+            - manifest-medical-director-signed
+            - manifest-activated
+            - tsa-added
+            - tsa-rotated
+            - tools-lock-changed
+            - terminology-edition-changed
+            - errata-blocker-opened
+            - errata-blocker-resolved
+            - drift-event-recorded
+            - manifest-superseded
+            - manifest-withdrawn
+        actor_id:        { type: string, minLength: 1 }
+        payload_sha256:  { type: string, pattern: "^[0-9a-f]{64}$" }
+        prov_activity_id:{ type: [string, "null"] }
+
+  # ---------------------------------------------------------------------------
+  # 4.16 Fixity (self-fingerprint)
+  # ---------------------------------------------------------------------------
+  fixity:
+    type: object
+    additionalProperties: false
+    required: [manifest_sha256, computed_at, canonical_form]
+    properties:
+      manifest_sha256:
+        type: string
+        pattern: "^[0-9a-f]{64}$"
+        description: SHA-256 of the JCS-canonical form of this manifest with `fixity` AND `medical_director_signoff` excluded.
+      computed_at:    { type: string, format: date-time }
+      canonical_form: { type: string, enum: [json-canonical-rfc8785] }
+
+  # ---------------------------------------------------------------------------
+  # 4.17 Medical-director signoff (Phase 0 lock)
+  # ---------------------------------------------------------------------------
+  medical_director_signoff: { $ref: "#/$defs/MedicalDirectorSignoff" }
+
+# -----------------------------------------------------------------------------
+# 5. CROSS-FIELD INVARIANTS (validators MUST enforce)
+# -----------------------------------------------------------------------------
+
+invariants:
+
+  - id: GM-INV-01
+    description: >
+      `sources[]` MUST contain exactly four entries with roles
+      {main-guideline, executive-summary, supplement, predecessor-2017},
+      one each. Mismatch is a release blocker.
+
+  - id: GM-INV-02
+    description: >
+      `supersession.predecessor_doi` MUST equal the `doi` of the
+      `predecessor-2017` source, and `supersession.predecessor_pdf_sha256`
+      MUST equal that source's `pdf_sha256`. Cross-references MUST be
+      consistent.
+
+  - id: GM-INV-03
+    description: >
+      `build_version_label` MUST recompute exactly from
+      `v<manifest_version>+ACC-AHA-2025+<jurisdiction>+<effective_date>`.
+      Mismatch is a release blocker.
+
+  - id: GM-INV-04
+    description: >
+      Every SourceDocument.license.spdx MUST be a member of LicenseSPDX.
+      For roles {main-guideline, executive-summary, supplement,
+      predecessor-2017}, the value SHOULD be `Other-Negotiated-Envelope`;
+      any other value triggers a legal-counsel-signoff requirement
+      recorded in `quote_envelope.legal_counsel_signoff`.
+
+  - id: GM-INV-05
+    description: >
+      `quote_envelope.envelope_id` MUST equal the
+      `copyright_envelope.envelope_version` recorded on every
+      RecommendationRecordHTN derived from this manifest. Drift indicates
+      a manifest version mismatch and is a release blocker.
+
+  - id: GM-INV-06
+    description: >
+      The cumulative `copyright_envelope.verbatim_chars` summed across
+      every emitted RecommendationRecordHTN, Guideline Card, Safety Case,
+      and retraction notice MUST NOT exceed
+      `quote_envelope.chars_per_document_max`, and per-source-page
+      cumulative MUST NOT exceed `quote_envelope.chars_per_page_max`.
+      Exceedance is a release blocker.
+
+  - id: GM-INV-07
+    description: >
+      Every `tsa_list[]` entry whose `cert_valid_until` is in the past
+      relative to the build's wall-clock time MUST be flagged. Gate 1
+      signatures using time-stamps from such TSAs are acceptable only if
+      the time-stamp `time` falls before `cert_valid_until` (G1-INV-25
+      enforced together with this rule).
+
+  - id: GM-INV-08
+    description: >
+      `tools_lock.lock_sha` MUST equal SHA-256 of the JCS-canonical form
+      of `tools_lock.items`. Any tool with `deterministic == false` MUST
+      NOT be the SOLE engine in any consensus state in any downstream
+      schema/skill.
+
+  - id: GM-INV-09
+    description: >
+      `tools_lock.llm_pair` MUST contain exactly two pin strings, each
+      referencing a distinct `tools_lock.items[]` entry of `kind == "llm"`,
+      AND the two LLMs MUST be from distinct vendor families per the
+      family-distinct rule in `schemas/atomic-unit.yaml` AU-INV-09.
+      Validators MUST resolve and check.
+
+  - id: GM-INV-10
+    description: >
+      `tools_lock.ocr_engines[]` MUST contain at least three entries, each
+      referencing a `kind == "ocr"` item.
+
+  - id: GM-INV-11
+    description: >
+      `terminology[]` MUST include entries for SNOMED-CT-International,
+      SNOMED-CT-US-Edition, LOINC, RxNorm, ICD-10-CM, and UCUM. Missing
+      any is a release blocker.
+
+  - id: GM-INV-12
+    description: >
+      Exactly one `risk_engine[]` entry MUST have `name == "PREVENT"`
+      and `legacy_only == false`. Any entry with `name == "PCE-legacy"`
+      MUST have `legacy_only == true`. PCE-legacy never feeds CQL or
+      CDS Hooks (ADR-HTN-001 D5).
+
+  - id: GM-INV-13
+    description: >
+      `grading_framework_pin.framework_version_label` MUST equal
+      "2015-update-as-reaffirmed-in-2025-HBP-guideline" (the const in
+      `schemas/acc-aha-grading.yaml`'s pin block).
+      `grading_framework_pin.schema_sha256` MUST equal the SHA-256 of
+      the on-disk `acc-aha-grading.yaml`. Mismatch is a release blocker.
+
+  - id: GM-INV-14
+    description: >
+      `phi_scrub_policy.fail_closed == true` AND `allow_override == false`.
+      No override is permitted (ADR-HTN-001 D10).
+
+  - id: GM-INV-15
+    description: >
+      `signature_policy.allowed_algorithms[]` MUST be non-empty and a
+      subset of {Ed25519, ECDSA-P256-SHA256}. Every Reviewer.public_key
+      and the medical director's signing key MUST use one of these.
+
+  - id: GM-INV-16
+    description: >
+      `intended_use.age_min_inclusive == 18` AND
+      `intended_use.requires_clinician_review == true`. Pediatric
+      invocation is forbidden by manifest (ADR-HTN-001 scope).
+
+  - id: GM-INV-17
+    description: >
+      `errata_watch.blockers_open[]` MUST be empty for `state == "active"`.
+      Any open blocker means the manifest is in `pending-medical-director`
+      or earlier; activation is a release blocker until cleared.
+
+  - id: GM-INV-18
+    description: >
+      Every `drift_events[]` of kind `source-sha-mismatch` MUST have
+      `action_taken == "blocked-build"` OR `action_taken == "opened-new-manifest-version"`.
+      Auto-update is forbidden.
+
+  - id: GM-INV-19
+    description: >
+      `audit_log[]` MUST be append-only and ordered by `occurred_at`.
+      Out-of-order or missing events indicate tampering and are release
+      blockers.
+
+  - id: GM-INV-20
+    description: >
+      `fixity.manifest_sha256` MUST equal SHA-256 of the JCS-canonical
+      form of this manifest with `fixity` AND `medical_director_signoff`
+      excluded. Hash MUST be deterministic across re-runs given identical
+      inputs.
+
+  - id: GM-INV-21
+    description: >
+      `medical_director_signoff.manifest_payload_sha256` MUST equal
+      `fixity.manifest_sha256` at signing time, AND the signature MUST
+      verify under a public key registered in the institutional KMS.
+      Validators MUST cryptographically verify; producer assertions are
+      ignored.
+
+  - id: GM-INV-22
+    description: >
+      `medical_director_signoff.time_stamp.tsa_cert_fingerprint_sha256`
+      MUST be a member of `tsa_list[].tsa_cert_fingerprint_sha256` whose
+      cert is valid at the signed_at time.
+
+  - id: GM-INV-23
+    description: >
+      `state == "active"` requires:
+        - `medical_director_signoff` present and verifying;
+        - `errata_watch.blockers_open == []`;
+        - `tools_lock.items[]` non-empty and lock_sha verifies;
+        - all required terminology editions present;
+        - PREVENT risk-engine entry present;
+        - grading-framework pin matches on-disk acc-aha-grading.yaml.
+
+  - id: GM-INV-24
+    description: >
+      `predecessor_manifest_version` MUST be set whenever this manifest
+      supersedes a prior `active` manifest. The prior manifest's `state`
+      MUST be `superseded`, and an `audit_log[]` event of kind
+      `manifest-superseded` MUST exist on it.
+
+  - id: GM-INV-25
+    description: >
+      `supersession.communication_resource.resource_path` MUST point to a
+      FHIR `Communication` resource that is emitted at first publish from
+      this manifest. Absence at publish time is a release blocker
+      (ADR-HTN-001 D14).
+
+  - id: GM-INV-26
+    description: >
+      `quote_envelope.figures_quotable == true` OR
+      `quote_envelope.tables_quotable == true` requires
+      `quote_envelope.legal_counsel_signoff` to be present and signed
+      within 90 days of `manifest_version` issuance. Defaults are false
+      per ADR-HTN-001.
+
+  - id: GM-INV-27
+    description: >
+      `external_services[]` of `kind == "terminology-server"` MUST exist
+      and its `endpoint_uri` MUST match the `server_uri` of every
+      `terminology[]` entry. Multi-server fallback is permitted only when
+      every server hosts the same pinned editions.
+
+  - id: GM-INV-28
+    description: >
+      Any change to `tools_lock`, `terminology[]`, `risk_engine`,
+      `quote_envelope`, `tsa_list`, `phi_scrub_policy`, `signature_policy`,
+      `intended_use`, or `grading_framework_pin` after `state` reaches
+      `active` MUST require a new manifest version with
+      `predecessor_manifest_version` set. In-place mutation of an active
+      manifest is a release blocker.
+
+# =============================================================================
+# 6. WORKED EXAMPLE (shape-correctness fixture)
+# -----------------------------------------------------------------------------
+# A single example is provided. EVERY field whose value can ONLY come from
+# the published source PDF, the publisher contract, the institutional KMS,
+# or a real reviewer is marked `HUMAN_FILL` with explicit instructions. The
+# pipeline refuses to operate on manifests containing `HUMAN_FILL` tokens.
+#
+# This example shows a `pending-medical-director` manifest: tools and
+# sources pinned, errata watch clean, ready for medical-director signoff.
+# =============================================================================
+
+examples:
+
+  - schema_version: "1.0.0"
+    manifest_id: "manifest-HUMAN_FILL_16HEX"
+    manifest_version: "1.0.0"
+    predecessor_manifest_version: null
+    state: pending-medical-director
+    framework_name: "cpg-htn-2025-acc-aha"
+    jurisdiction: "US"
+    effective_date: "HUMAN_FILL_ISO_DATE"
+    build_version_label: "v1.0.0+ACC-AHA-2025+US+HUMAN_FILL_ISO_DATE"
+
+    sources:
+      - role: main-guideline
+        title: "HUMAN_FILL: Verbatim title of the 2025 ACC/AHA HBP Guideline as printed."
+        publisher: "American College of Cardiology / American Heart Association"
+        publication_date: "HUMAN_FILL_ISO_DATE"
+        doi: "HUMAN_FILL_DOI"
+        url: "HUMAN_FILL_URL"
+        pdf_path: "raw/HUMAN_FILL_SRCID/main-guideline.pdf"
+        pdf_sha256: "HUMAN_FILL_64HEX"
+        conditioned_pdf_path: null
+        conditioned_pdf_sha256: null
+        page_count: 0   # HUMAN_FILL: integer page count
+        license:
+          spdx: "Other-Negotiated-Envelope"
+          contract_uri: "https://HUMAN_FILL/publisher-contract.pdf"
+          contract_signed_at: "HUMAN_FILL_ISO_DATETIME"
+          copyright_holder: "HUMAN_FILL: copyright holder as named on the source PDF copyright line"
+        crossref_relations: []
+        errata_feed:
+          feed_url: "https://HUMAN_FILL/errata.xml"
+          feed_kind: rss
+          last_polled_at: "HUMAN_FILL_ISO_DATETIME"
+          last_known_etag: null
+          last_known_hash: null
+
+      - role: executive-summary
+        title: "HUMAN_FILL: Executive summary title."
+        publisher: "American College of Cardiology / American Heart Association"
+        publication_date: "HUMAN_FILL_ISO_DATE"
+        doi: "HUMAN_FILL_DOI"
+        url: "HUMAN_FILL_URL"
+        pdf_path: "raw/HUMAN_FILL_SRCID/executive-summary.pdf"
+        pdf_sha256: "HUMAN_FILL_64HEX"
+        page_count: 0   # HUMAN_FILL
+        license:
+          spdx: "Other-Negotiated-Envelope"
+          contract_uri: "https://HUMAN_FILL/publisher-contract.pdf"
+          contract_signed_at: "HUMAN_FILL_ISO_DATETIME"
+          copyright_holder: "HUMAN_FILL"
+
+      - role: supplement
+        title: "HUMAN_FILL: Data supplement title."
+        publisher: "American College of Cardiology / American Heart Association"
+        publication_date: "HUMAN_FILL_ISO_DATE"
+        doi: "HUMAN_FILL_DOI"
+        url: "HUMAN_FILL_URL"
+        pdf_path: "raw/HUMAN_FILL_SRCID/supplement.pdf"
+        pdf_sha256: "HUMAN_FILL_64HEX"
+        page_count: 0   # HUMAN_FILL
+        license:
+          spdx: "Other-Negotiated-Envelope"
+          contract_uri: "https://HUMAN_FILL/publisher-contract.pdf"
+          contract_signed_at: "HUMAN_FILL_ISO_DATETIME"
+          copyright_holder: "HUMAN_FILL"
+
+      - role: predecessor-2017
+        title: "HUMAN_FILL: 2017 ACC/AHA HBP Guideline title verbatim."
+        publisher: "American College of Cardiology / American Heart Association"
+        publication_date: "HUMAN_FILL_ISO_DATE"
+        doi: "HUMAN_FILL_DOI"
+        url: "HUMAN_FILL_URL"
+        pdf_path: "raw/HUMAN_FILL_SRCID/predecessor-2017.pdf"
+        pdf_sha256: "HUMAN_FILL_64HEX"
+        page_count: 0   # HUMAN_FILL
+        license:
+          spdx: "Other-Negotiated-Envelope"
+          contract_uri: "https://HUMAN_FILL/publisher-contract.pdf"
+          contract_signed_at: "HUMAN_FILL_ISO_DATETIME"
+          copyright_holder: "HUMAN_FILL"
+
+    supersession:
+      predecessor_role: predecessor-2017
+      predecessor_doi: "HUMAN_FILL_DOI"
+      predecessor_pdf_sha256: "HUMAN_FILL_64HEX"
+      predecessor_publication_date: "HUMAN_FILL_ISO_DATE"
+      effective_supersession_date: "HUMAN_FILL_ISO_DATE"
+      communication_resource:
+        resource_path: "fhir/Communication/htn-2025-supersedes-2017.json"
+        status: preparation
+        intent: order
+        payload_summary: |
+          HUMAN_FILL: One-paragraph human-readable supersession notice (e.g.,
+          "Effective <date>, the 2025 ACC/AHA HBP Guideline supersedes the
+          2017 edition for clinical-decision-support content emitted by this
+          framework.")
+      mapping_advisory_only: true
+
+    quote_envelope:
+      envelope_id: "env-HUMAN_FILL_16HEX"
+      contract_uri: "https://HUMAN_FILL/publisher-contract.pdf"
+      chars_per_page_max: 0       # HUMAN_FILL: agreed integer cap, e.g., 1500
+      chars_per_document_max: 0   # HUMAN_FILL: agreed integer cap, e.g., 60000
+      figures_quotable: false
+      tables_quotable: false
+      attribution_required: true
+      acknowledgement_text: |
+        HUMAN_FILL: Verbatim acknowledgement string approved by the publisher
+        and legal counsel, e.g., "Reproduced under license from <publisher>.
+        © <year> <copyright holder>. All rights reserved. Used by permission."
+      legal_counsel_signoff:
+        counsel_name: "HUMAN_FILL"
+        organization: "HUMAN_FILL"
+        signed_at: "HUMAN_FILL_ISO_DATETIME"
+        signature_uri: "https://HUMAN_FILL/legal-signoff.pdf"
+
+    tsa_list:
+      - tsa_name: "HUMAN_FILL: TSA name"
+        tsa_url: "https://HUMAN_FILL/tsa"
+        tsa_cert_pem: |
+          HUMAN_FILL: PEM-encoded TSA certificate.
+        tsa_cert_fingerprint_sha256: "HUMAN_FILL_64HEX"
+        cert_valid_from: "HUMAN_FILL_ISO_DATETIME"
+        cert_valid_until: "HUMAN_FILL_ISO_DATETIME"
+        hash_alg_supported: [SHA-256]
+        added_at: "HUMAN_FILL_ISO_DATETIME"
+        rotated_from: null
+
+    tools_lock:
+      lock_sha: "HUMAN_FILL_64HEX"
+      items:
+        - { name: "qpdf",          kind: pdf-parser,        pin: "HUMAN_FILL_PIN", sha256: "HUMAN_FILL_64HEX", deterministic: true }
+        - { name: "pymupdf",       kind: pdf-parser,        pin: "HUMAN_FILL_PIN", sha256: "HUMAN_FILL_64HEX", deterministic: true }
+        - { name: "pdfminer.six",  kind: pdf-parser,        pin: "HUMAN_FILL_PIN", sha256: "HUMAN_FILL_64HEX", deterministic: true }
+        - { name: "marker",        kind: pdf-parser,        pin: "HUMAN_FILL_PIN", sha256: null,               deterministic: false }
+        - { name: "publaynet-d2",  kind: layout-detector,   pin: "HUMAN_FILL_PIN", sha256: "HUMAN_FILL_64HEX", deterministic: true }
+        - { name: "layoutlmv3",    kind: layout-detector,   pin: "HUMAN_FILL_PIN", sha256: null,               deterministic: false }
+        - { name: "camelot",       kind: table-engine,      pin: "HUMAN_FILL_PIN", sha256: "HUMAN_FILL_64HEX", deterministic: true }
+        - { name: "tabula",        kind: table-engine,      pin: "HUMAN_FILL_PIN", sha256: "HUMAN_FILL_64HEX", deterministic: true }
+        - { name: "pdfplumber",    kind: table-engine,      pin: "HUMAN_FILL_PIN", sha256: "HUMAN_FILL_64HEX", deterministic: true }
+        - { name: "tablemaster",   kind: vlm,               pin: "HUMAN_FILL_PIN", sha256: null,               deterministic: false }
+        - { name: "donut-table",   kind: vlm,               pin: "HUMAN_FILL_PIN", sha256: null,               deterministic: false }
+        - { name: "florence-2",    kind: figure-parser,     pin: "HUMAN_FILL_PIN", sha256: null,               deterministic: false }
+        - { name: "pix2struct",    kind: figure-parser,     pin: "HUMAN_FILL_PIN", sha256: null,               deterministic: false }
+        - { name: "deplot",        kind: chart-parser,      pin: "HUMAN_FILL_PIN", sha256: null,               deterministic: false }
+        - { name: "tesseract",     kind: ocr,               pin: "HUMAN_FILL_PIN", sha256: "HUMAN_FILL_64HEX", deterministic: true }
+        - { name: "paddleocr",     kind: ocr,               pin: "HUMAN_FILL_PIN", sha256: "HUMAN_FILL_64HEX", deterministic: true }
+        - { name: "surya",         kind: ocr,               pin: "HUMAN_FILL_PIN", sha256: "HUMAN_FILL_64HEX", deterministic: true }
+        - { name: "claude-opus-4", kind: llm,               pin: "HUMAN_FILL_PIN", sha256: null,               deterministic: false }
+        - { name: "gpt-class-x",   kind: llm,               pin: "HUMAN_FILL_PIN", sha256: null,               deterministic: false }
+        - { name: "presidio",      kind: phi-scrubber,      pin: "HUMAN_FILL_PIN", sha256: "HUMAN_FILL_64HEX", deterministic: true }
+        - { name: "spacy-med7",    kind: phi-scrubber,      pin: "HUMAN_FILL_PIN", sha256: "HUMAN_FILL_64HEX", deterministic: true }
+        - { name: "fhir-validator",kind: fhir-validator,    pin: "HUMAN_FILL_PIN", sha256: "HUMAN_FILL_64HEX", deterministic: true }
+        - { name: "sushi",         kind: ig-builder,        pin: "HUMAN_FILL_PIN", sha256: "HUMAN_FILL_64HEX", deterministic: true }
+        - { name: "cql-engine",    kind: cql-runtime,       pin: "HUMAN_FILL_PIN", sha256: "HUMAN_FILL_64HEX", deterministic: true }
+        - { name: "synthea",       kind: synthea,           pin: "HUMAN_FILL_PIN", sha256: "HUMAN_FILL_64HEX", deterministic: true }
+        - { name: "tsp-client",    kind: cryptographic-tsp, pin: "HUMAN_FILL_PIN", sha256: "HUMAN_FILL_64HEX", deterministic: true }
+        - { name: "kms-client",    kind: kms,               pin: "HUMAN_FILL_PIN", sha256: "HUMAN_FILL_64HEX", deterministic: true }
+      llm_pair: ["HUMAN_FILL_PIN_FOR_CLAUDE", "HUMAN_FILL_PIN_FOR_GPT"]
+      vlm: "HUMAN_FILL_PIN_FOR_VLM"
+      ocr_engines: ["HUMAN_FILL_PIN_FOR_TESSERACT", "HUMAN_FILL_PIN_FOR_PADDLE", "HUMAN_FILL_PIN_FOR_SURYA"]
+
+    external_services:
+      - name: "Ontoserver"
+        kind: terminology-server
+        endpoint_uri: "https://HUMAN_FILL/fhir"
+        version_or_release: "HUMAN_FILL_VERSION"
+        fingerprint_or_pin: "HUMAN_FILL_PIN"
+        auth_method: mtls
+        sla_uri: "https://HUMAN_FILL/sla"
+      - name: "CrossRef API"
+        kind: crossref-api
+        endpoint_uri: "https://api.crossref.org/"
+        version_or_release: "HUMAN_FILL_VERSION"
+        fingerprint_or_pin: "HUMAN_FILL_PIN"
+        auth_method: none
+        sla_uri: null
+      - name: "Institutional KMS"
+        kind: kms
+        endpoint_uri: "https://HUMAN_FILL/kms"
+        version_or_release: "HUMAN_FILL_VERSION"
+        fingerprint_or_pin: "HUMAN_FILL_PIN"
+        auth_method: mtls
+        sla_uri: "https://HUMAN_FILL/kms-sla"
+
+    terminology:
+      - { vocabulary: SNOMED-CT-International, edition_label: "HUMAN_FILL_LABEL", edition_date: "HUMAN_FILL_ISO_DATE", server_uri: "https://HUMAN_FILL/fhir", affiliate_license_uri: null }
+      - { vocabulary: SNOMED-CT-US-Edition,    edition_label: "HUMAN_FILL_LABEL", edition_date: "HUMAN_FILL_ISO_DATE", server_uri: "https://HUMAN_FILL/fhir", affiliate_license_uri: "https://HUMAN_FILL/affiliate-license" }
+      - { vocabulary: LOINC,                   edition_label: "HUMAN_FILL_LABEL", edition_date: "HUMAN_FILL_ISO_DATE", server_uri: "https://HUMAN_FILL/fhir", affiliate_license_uri: null }
+      - { vocabulary: RxNorm,                  edition_label: "HUMAN_FILL_LABEL", edition_date: "HUMAN_FILL_ISO_DATE", server_uri: "https://HUMAN_FILL/fhir", affiliate_license_uri: null }
+      - { vocabulary: ICD-10-CM,               edition_label: "HUMAN_FILL_LABEL", edition_date: "HUMAN_FILL_ISO_DATE", server_uri: "https://HUMAN_FILL/fhir", affiliate_license_uri: null }
+      - { vocabulary: UCUM,                    edition_label: "HUMAN_FILL_LABEL", edition_date: "HUMAN_FILL_ISO_DATE", server_uri: "https://HUMAN_FILL/fhir", affiliate_license_uri: null }
+
+    risk_engine:
+      - name: PREVENT
+        implementation: "aha-prevent-reference"
+        pin: "HUMAN_FILL_PIN"
+        sha256: "HUMAN_FILL_64HEX"
+        test_vectors_uri: "https://HUMAN_FILL/prevent-test-vectors.json"
+        legacy_only: false
+
+    grading_framework_pin:
+      schema_uri: "schemas/acc-aha-grading.yaml"
+      schema_sha256: "HUMAN_FILL_64HEX"
+      framework_version_label: "2015-update-as-reaffirmed-in-2025-HBP-guideline"
+
+    phi_scrub_policy:
+      detectors: [presidio, spacy-med7, regex-us]
+      fail_closed: true
+      allow_override: false
+      hazard_handler_uri: "https://HUMAN_FILL/runbooks/phi-hazard.md"
+
+    signature_policy:
+      allowed_algorithms: [Ed25519, ECDSA-P256-SHA256]
+      manifest_signature_required: true
+      kms_uri: "https://HUMAN_FILL/kms"
+
+    intended_use:
+      statement: |
+        HUMAN_FILL: One-paragraph intended-use statement, e.g.,
+        "Clinical decision support for adult outpatient hypertension
+        management in US settings, derived faithfully from the 2025 ACC/AHA
+        HBP Guideline. Not a directive; not a replacement for clinician
+        judgment; not certified for pediatric or non-US use."
+      in_scope:
+        - "Adult outpatient HTN management in US settings."
+        - "CDS Hooks suggestions emitted to EHRs that present them to a licensed clinician."
+      out_of_scope:
+        - "Pediatric (<18 years)."
+        - "Non-US deployment."
+        - "Autonomous closed-loop dose adjustment."
+      age_min_inclusive: 18
+      requires_clinician_review: true
+
+    errata_watch:
+      poll_cadence_iso8601: "P1D"
+      last_polled_at: "HUMAN_FILL_ISO_DATETIME"
+      blockers_open: []
+
+    drift_events: []
+
+    audit_log:
+      - { event_id: "evt-HUMAN_FILL_16HEX", occurred_at: "HUMAN_FILL_ISO_DATETIME", kind: manifest-drafted, actor_id: "HUMAN_FILL: operator id", payload_sha256: "HUMAN_FILL_64HEX", prov_activity_id: "HUMAN_FILL" }
+
+    fixity:
+      manifest_sha256: "HUMAN_FILL_64HEX"
+      computed_at: "HUMAN_FILL_ISO_DATETIME"
+      canonical_form: json-canonical-rfc8785
+
+    medical_director_signoff:
+      director_name: "HUMAN_FILL: legal name"
+      institution: "HUMAN_FILL"
+      signed_at: "HUMAN_FILL_ISO_DATETIME"
+      manifest_payload_sha256: "HUMAN_FILL_64HEX"
+      signature_b64: "HUMAN_FILL_BASE64"
+      signature_algorithm: Ed25519
+      key_id: "HUMAN_FILL: institutional KMS key id"
+      time_stamp:
+        tsa_cert_fingerprint_sha256: "HUMAN_FILL_64HEX"
+        time: "HUMAN_FILL_ISO_DATETIME"
+        token_b64: "HUMAN_FILL_BASE64"
+
+# =============================================================================
+# 7. CHANGE CONTROL
+# -----------------------------------------------------------------------------
+# Any change to this schema (closed enums, policy clauses, validation rules,
+# invariants, or example fixtures) requires:
+#   - A change-controlled diff with regression evaluation against the golden set.
+#   - Panel-chair signoff.
+#   - Increment of `schema_version` (semver: breaking = major).
+#   - Update of `last_reviewed`.
+#   - Coordinated update of every producing/consuming skill's `tools_lock`
+#     reference and acceptance test fixtures.
+#   - Any change to: source_admission; versioning_triple; supersession;
+#     quote_envelope; errata_watch; no_auto_update; pinning_completeness;
+#     jurisdictional_scope; intended_use_boundary; phi_failclosed; or
+#     signature_algorithms requires ALSO an ADR-HTN-001 amendment with
+#     documented rationale and a new medical-director signoff.
+# =============================================================================
+
+change_control:
+  semver: true
+  golden_set_regression_required: true
+  panel_chair_signoff_required: true
+  parent_schemas_to_update_on_breaking_change:
+    - cpg-htn-2025-acc-aha/schemas/sair.yaml
+    - cpg-htn-2025-acc-aha/schemas/recommendation-record-htn.yaml
+    - cpg-htn-2025-acc-aha/schemas/atomic-unit.yaml
+    - cpg-htn-2025-acc-aha/schemas/gate1-register.yaml
+    - cpg-htn-2025-acc-aha/schemas/acc-aha-grading.yaml
+  parent_skills_to_update_on_breaking_change:
+    - cpg-htn-2025-acc-aha/skills/acquire-hbp-2025-source
+    - cpg-htn-2025-acc-aha/skills/parse-prepare-pdf
+    - cpg-htn-2025-acc-aha/skills/parse-acc-aha-recbox
+    - cpg-htn-2025-acc-aha/skills/extract-recommendation-cor-loe
+    - cpg-htn-2025-acc-aha/skills/bind-htn-vocab
+    - cpg-htn-2025-acc-aha/skills/emit-cql-htn
+    - cpg-htn-2025-acc-aha/skills/cds-hooks-package-htn
+    - cpg-htn-2025-acc-aha/skills/safety-hbp
+    - cpg-htn-2025-acc-aha/skills/copyright-quote-check-acc-aha
+    - cpg-htn-2025-acc-aha/skills/flow-hbp-2025-build
+  adr_amendment_required_for_policy_changes:
+    source_admission: true
+    versioning_triple: true
+    supersession: true
+    quote_envelope: true
+    errata_watch: true
+    no_auto_update: true
+    pinning_completeness: true
+    jurisdictional_scope: true
+    intended_use_boundary: true
+    phi_failclosed: true
+    signature_algorithms: true
+    adr_to_amend: ADR-HTN-001 D1, D2, D3, D5, D8, D9, D10, D11, D13, D14, D15

@@ -1,0 +1,51 @@
+# ... (continuation of §7 change_control; the file resumes mid-list) ...
+
+change_control:
+  semver: true
+  golden_set_regression_required: true
+  panel_chair_signoff_required: true
+  medical_director_acknowledgement_required: true
+  parent_schemas_to_update_on_breaking_change:
+    - cpg-htn-2025-acc-aha/schemas/recommendation-record-htn.yaml
+    - cpg-htn-2025-acc-aha/schemas/atomic-unit.yaml
+    - cpg-htn-2025-acc-aha/schemas/sair.yaml
+    - cpg-htn-2025-acc-aha/schemas/gate1-register.yaml
+    - cpg-htn-2025-acc-aha/schemas/gate2-register.yaml
+    - cpg-htn-2025-acc-aha/schemas/gate3-attestation.yaml
+    - cpg-htn-2025-acc-aha/schemas/safety-case-htn.yaml
+    - cpg-htn-2025-acc-aha/schemas/cds-hooks-services-htn.yaml
+    - cpg-htn-2025-acc-aha/schemas/guideline-manifest-hbp-2025.yaml
+  parent_skills_to_update_on_breaking_change:
+    - cpg-htn-2025-acc-aha/skills/extract-pharm-rules
+    - cpg-htn-2025-acc-aha/skills/extract-contraindications
+    - cpg-htn-2025-acc-aha/skills/extract-monitoring
+    - cpg-htn-2025-acc-aha/skills/bind-risk-engine
+    - cpg-htn-2025-acc-aha/skills/emit-cql-htn
+    - cpg-htn-2025-acc-aha/skills/cql-test-synthea-htn
+    - cpg-htn-2025-acc-aha/skills/cds-hooks-package-htn
+    - cpg-htn-2025-acc-aha/skills/safety-hbp
+    - cpg-htn-2025-acc-aha/skills/safety-case-attest
+    - cpg-htn-2025-acc-aha/skills/fhir-implementation-guide-build
+    - cpg-htn-2025-acc-aha/skills/flow-hbp-2025-build
+  adr_amendment_required_for_policy_changes:
+    closed_rule_kind_set: true
+    closed_support_enums: true
+    dual_llm_family_distinct_agreement: true
+    inheritance_from_parent_record_and_atomic_unit: true
+    hard_block_basis_for_denylist: true
+    pregnancy_denylist_constraint_block: true
+    attending_override_denylist: true
+    pce_legacy_never_feeds_rules: true
+    age_gate_eq_18: true
+    rxnorm_pin_alignment: true
+    numeric_fact_integrity: true
+    verbatim_integrity: true
+    panel_chair_acknowledgement_for_held: true
+    conflict_routing: true
+    deterministic_id_derivation: true
+    rule_canonicalization: true
+    rule_set_canonicalization: true
+    post_seal_immutability: true
+    predecessor_chain: true
+    audit_log_append_only: true
+    adr_to_amend: ADR-HTN-001 D2, D3, D5, D8, D9, D10, D11, D14, D15

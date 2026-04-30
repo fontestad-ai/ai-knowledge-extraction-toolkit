@@ -1,0 +1,116 @@
+# ... (continuation of example 6.2; the file resumes mid-third-row, in
+#      `cross_check_4_rxnorm_subset`) ...
+
+      - { row_id: "cir-HUMAN_FILL_16HEX", referenced_rule: { rule_id: "pr-HUMAN_FILL_16HEX", rule_sha256: "HUMAN_FILL_64HEX", kind: denylist, parent_record_id: "rec-HUMAN_FILL_16HEX", parent_atomic_unit_id: "au-HUMAN_FILL_16HEX", gate1_cohort_id: "cohort-HUMAN_FILL_16HEX", acc_aha_cor: III-Harm, acc_aha_loe: B-NR, anchor_kind: cor-iii-harm-anchor, population_filter: [pregnant, postpartum], posture_at_cds: hard-refuse, cds_hook: order-select, attending_override_permitted: false, documentation_only: false, indicator_set: [critical], rxnorm_edition_pin: "HUMAN_FILL_RXNORM_EDITION", rxnorm_subset_sha256_recorded: "HUMAN_FILL_64HEX", bound_risk_engine_name: PREVENT }, acc_aha_cor: III-Harm, acc_aha_loe: B-NR, parent_record_id: "rec-HUMAN_FILL_16HEX", parent_atomic_unit_id: "au-HUMAN_FILL_16HEX", gate1_cohort_id: "cohort-HUMAN_FILL_16HEX", cross_check_1_record_inv09: { status: pass, anchor_kind_rule: cor-iii-harm-anchor, anchor_kind_record_inv09: cor-iii-harm-anchor, record_acc_aha_cor: III-Harm, failure_diagnostic: null }, cross_check_2_atomic_unit_anchor: { status: pass, anchor_kind_rule: cor-iii-harm-anchor, anchor_kind_atomic_unit: cor-iii-harm-anchor, sair_sha256: "HUMAN_FILL_64HEX", page: 12, bbox: { x0: 0, y0: 0, x1: 0, y1: 0 }, verbatim_roundtrip_ok: true, failure_diagnostic: null }, cross_check_3_recbox_cell_shape: { status: pass, canonical_shape_present: true, cor_cell_equals_rule_cor: true, loe_cell_equals_rule_loe: true, recommendation_cell_equals_source_text: true, failure_diagnostic: null }, cross_check_4_rxnorm_subset: { status: pass, subset_sha256: "HUMAN_FILL_64HEX", subset_sha256_upstream_p10: "HUMAN_FILL_64HEX", subset_sha256_rule_recorded: "HUMAN_FILL_64HEX", subset_size: 4, rxnorm_edition_pin: "HUMAN_FILL_RXNORM_EDITION", failure_diagnostic: null }, pregnancy_reinforcement: { applicability: applicable, status: fail, posture_at_cds_ok: true, cds_hook_ok: true, attending_override_permitted_ok: true, documentation_only_ok: true, indicator_set_ok: true, attending_override_pattern_scan_clean: false, pregnancy_value_set_id_present: true, manifest_pregnancy_value_set_id: "HUMAN_FILL_PREGNANCY_VALUE_SET_ID", failure_diagnostic: { summary: "AttendingOverridePattern match detected during pregnancy reinforcement free-text scan; row blocked unconditionally; parent record routes to panel-chair re-review." } }, pce_legacy_scan: { status: pass, fields_scanned: [referenced_rule.rationale, referenced_rule.clinical_consequence, notes], matches_count: 0, failure_diagnostic: null }, methods_passed: [record-inv09-anchor-match, atomic-unit-anchor-match, verbatim-roundtrip, recbox-cell-shape-match, recbox-cor-cell-equals-rule-cor, recbox-loe-cell-equals-rule-loe, recbox-recommendation-cell-equals-source-text, rxnorm-resolution-non-empty, rxnorm-subset-sha-match-upstream-p10, rxnorm-subset-sha-match-rule-recorded, pce-legacy-literal-scan-clean], methods_failed: [pregnancy-reinforcement-pass, attending-override-pattern-scan-clean], materialized: null, held_routing: null, blocked_routing: { panel_chair_route: "gate1-sme-review --mode chair-finalize", concern_category: pregnancy-population-misclassified, parent_record_id_routed: "rec-HUMAN_FILL_16HEX", paused_downstream_phases: [P15, P16, P20, P21, P22, P23, P26, gate-2, gate-3], blocked_rationale: "Pregnancy denylist row blocked under CIA-INV-13 / CIA-INV-14; AttendingOverridePattern free-text match in upstream input; investigate as adversarial input or upstream contamination." }, overall: blocked, state: blocked, notes: "HUMAN_FILL", fixity: { row_sha256: "HUMAN_FILL_64HEX", computed_at: "HUMAN_FILL_ISO_DATETIME", canonical_form: json-canonical-rfc8785 } }
+
+    state: sealed
+
+    audit_log:
+      - { event_id: "evt-HUMAN_FILL_16HEX", occurred_at: "HUMAN_FILL_ISO_DATETIME", kind: cross-check-artifact-built,                                actor_id: "HUMAN_FILL", payload_sha256: "HUMAN_FILL_64HEX", prov_activity_id: "HUMAN_FILL", row_id: null }
+      - { event_id: "evt-HUMAN_FILL_16HEX", occurred_at: "HUMAN_FILL_ISO_DATETIME", kind: cross-check-1-record-inv09-pass,                          actor_id: "HUMAN_FILL", payload_sha256: "HUMAN_FILL_64HEX", prov_activity_id: "HUMAN_FILL", row_id: "cir-HUMAN_FILL_16HEX" }
+      - { event_id: "evt-HUMAN_FILL_16HEX", occurred_at: "HUMAN_FILL_ISO_DATETIME", kind: cross-check-2-atomic-unit-anchor-pass,                    actor_id: "HUMAN_FILL", payload_sha256: "HUMAN_FILL_64HEX", prov_activity_id: "HUMAN_FILL", row_id: "cir-HUMAN_FILL_16HEX" }
+      - { event_id: "evt-HUMAN_FILL_16HEX", occurred_at: "HUMAN_FILL_ISO_DATETIME", kind: cross-check-3-recbox-cell-pass,                           actor_id: "HUMAN_FILL", payload_sha256: "HUMAN_FILL_64HEX", prov_activity_id: "HUMAN_FILL", row_id: "cir-HUMAN_FILL_16HEX" }
+      - { event_id: "evt-HUMAN_FILL_16HEX", occurred_at: "HUMAN_FILL_ISO_DATETIME", kind: cross-check-4-rxnorm-subset-pass,                         actor_id: "HUMAN_FILL", payload_sha256: "HUMAN_FILL_64HEX", prov_activity_id: "HUMAN_FILL", row_id: "cir-HUMAN_FILL_16HEX" }
+      - { event_id: "evt-HUMAN_FILL_16HEX", occurred_at: "HUMAN_FILL_ISO_DATETIME", kind: pregnancy-denylist-cross-check-pass,                      actor_id: "HUMAN_FILL", payload_sha256: "HUMAN_FILL_64HEX", prov_activity_id: "HUMAN_FILL", row_id: "cir-HUMAN_FILL_16HEX" }
+      - { event_id: "evt-HUMAN_FILL_16HEX", occurred_at: "HUMAN_FILL_ISO_DATETIME", kind: evidence-variable-built,                                  actor_id: "HUMAN_FILL", payload_sha256: "HUMAN_FILL_64HEX", prov_activity_id: "HUMAN_FILL", row_id: "cir-HUMAN_FILL_16HEX" }
+      - { event_id: "evt-HUMAN_FILL_16HEX", occurred_at: "HUMAN_FILL_ISO_DATETIME", kind: evidence-built,                                           actor_id: "HUMAN_FILL", payload_sha256: "HUMAN_FILL_64HEX", prov_activity_id: "HUMAN_FILL", row_id: "cir-HUMAN_FILL_16HEX" }
+      - { event_id: "evt-HUMAN_FILL_16HEX", occurred_at: "HUMAN_FILL_ISO_DATETIME", kind: cross-check-3-recbox-cell-mismatch,                       actor_id: "HUMAN_FILL", payload_sha256: "HUMAN_FILL_64HEX", prov_activity_id: "HUMAN_FILL", row_id: "cir-HUMAN_FILL_16HEX" }
+      - { event_id: "evt-HUMAN_FILL_16HEX", occurred_at: "HUMAN_FILL_ISO_DATETIME", kind: artifact-routed-to-queue,                                 actor_id: "HUMAN_FILL", payload_sha256: "HUMAN_FILL_64HEX", prov_activity_id: "HUMAN_FILL", row_id: "cir-HUMAN_FILL_16HEX" }
+      - { event_id: "evt-HUMAN_FILL_16HEX", occurred_at: "HUMAN_FILL_ISO_DATETIME", kind: pregnancy-denylist-attending-override-pattern-detected,   actor_id: "HUMAN_FILL", payload_sha256: "HUMAN_FILL_64HEX", prov_activity_id: "HUMAN_FILL", row_id: "cir-HUMAN_FILL_16HEX" }
+      - { event_id: "evt-HUMAN_FILL_16HEX", occurred_at: "HUMAN_FILL_ISO_DATETIME", kind: pregnancy-denylist-cross-check-failed,                    actor_id: "HUMAN_FILL", payload_sha256: "HUMAN_FILL_64HEX", prov_activity_id: "HUMAN_FILL", row_id: "cir-HUMAN_FILL_16HEX" }
+      - { event_id: "evt-HUMAN_FILL_16HEX", occurred_at: "HUMAN_FILL_ISO_DATETIME", kind: artifact-routed-to-panel-chair,                           actor_id: "HUMAN_FILL", payload_sha256: "HUMAN_FILL_64HEX", prov_activity_id: "HUMAN_FILL", row_id: "cir-HUMAN_FILL_16HEX" }
+      - { event_id: "evt-HUMAN_FILL_16HEX", occurred_at: "HUMAN_FILL_ISO_DATETIME", kind: cross-check-artifact-verified,                            actor_id: "HUMAN_FILL", payload_sha256: "HUMAN_FILL_64HEX", prov_activity_id: "HUMAN_FILL", row_id: null }
+
+    fixity:
+      cross_check_sha256: "HUMAN_FILL_64HEX"
+      computed_at: "HUMAN_FILL_ISO_DATETIME"
+      canonical_form: json-canonical-rfc8785
+
+# =============================================================================
+# 7. CHANGE CONTROL
+# -----------------------------------------------------------------------------
+# Any change to this schema (closed enums, the per-row constraint
+# matrix, the AttendingOverridePattern denylist, the
+# pregnancy_denylist_reinforcement_block, the pregnancy-denylist
+# categorical rejection at the artifact layer, the held vs blocked
+# routing semantics, the materialized FHIR resource id derivation,
+# the post-Gate-2-reference immutability rules, validation rules,
+# invariants, or example fixtures) requires:
+#   - A change-controlled diff with regression evaluation against the
+#     golden contraindication artifact set.
+#   - Panel-chair signoff AND medical-director acknowledgement (since
+#     this schema directly governs the cross-check layer that feeds
+#     the IG composition of safety-critical hard-blocks).
+#   - Increment of `schema_version` (semver: breaking = major).
+#   - Update of `last_reviewed`.
+#   - Coordinated update of every producing/consuming skill's
+#     tools_lock reference and acceptance-test fixtures.
+#   - Any change to: closed_cross_check_kind_set;
+#     rule_scope_is_denylist_advanced;
+#     pregnancy_denylist_categorical_rejection;
+#     pregnancy_denylist_reinforcement_block;
+#     attending_override_denylist;
+#     pce_legacy_never_appears;
+#     inheritance_from_parent_rule;
+#     age_gate_eq_18;
+#     rxnorm_pin_alignment_and_drift_detection;
+#     fhir_r5_profile_compliance;
+#     deterministic_id_derivation;
+#     artifact_canonicalization;
+#     audit_log_append_only;
+#     post_gate_2_reference_immutability;
+#     superseded_artifacts;
+#     conflict_routing_to_panel_chair;
+#     requires ALSO an ADR-HTN-001 amendment with documented
+#     rationale and a new medical-director signoff.
+# =============================================================================
+
+change_control:
+  semver: true
+  golden_set_regression_required: true
+  panel_chair_signoff_required: true
+  medical_director_acknowledgement_required: true
+  parent_schemas_to_update_on_breaking_change:
+    - cpg-htn-2025-acc-aha/schemas/recommendation-record-htn.yaml
+    - cpg-htn-2025-acc-aha/schemas/atomic-unit.yaml
+    - cpg-htn-2025-acc-aha/schemas/sair.yaml
+    - cpg-htn-2025-acc-aha/schemas/acc-aha-grading.yaml
+    - cpg-htn-2025-acc-aha/schemas/gate1-register.yaml
+    - cpg-htn-2025-acc-aha/schemas/gate2-register.yaml
+    - cpg-htn-2025-acc-aha/schemas/gate3-attestation.yaml
+    - cpg-htn-2025-acc-aha/schemas/safety-case-htn.yaml
+    - cpg-htn-2025-acc-aha/schemas/cds-hooks-services-htn.yaml
+    - cpg-htn-2025-acc-aha/schemas/pharm-rule-htn.yaml
+    - cpg-htn-2025-acc-aha/schemas/guideline-manifest-hbp-2025.yaml
+  parent_skills_to_update_on_breaking_change:
+    - cpg-htn-2025-acc-aha/skills/extract-contraindications
+    - cpg-htn-2025-acc-aha/skills/extract-pharm-rules
+    - cpg-htn-2025-acc-aha/skills/extract-monitoring
+    - cpg-htn-2025-acc-aha/skills/bind-risk-engine
+    - cpg-htn-2025-acc-aha/skills/emit-cql-htn
+    - cpg-htn-2025-acc-aha/skills/cql-test-synthea-htn
+    - cpg-htn-2025-acc-aha/skills/cds-hooks-package-htn
+    - cpg-htn-2025-acc-aha/skills/safety-hbp
+    - cpg-htn-2025-acc-aha/skills/safety-case-attest
+    - cpg-htn-2025-acc-aha/skills/fhir-implementation-guide-build
+    - cpg-htn-2025-acc-aha/skills/parse-reconcile-queue
+    - cpg-htn-2025-acc-aha/skills/gate1-sme-review
+    - cpg-htn-2025-acc-aha/skills/flow-hbp-2025-build
+  adr_amendment_required_for_policy_changes:
+    closed_cross_check_kind_set: true
+    rule_scope_is_denylist_advanced: true
+    pregnancy_denylist_categorical_rejection: true
+    pregnancy_denylist_reinforcement_block: true
+    attending_override_denylist: true
+    pce_legacy_never_appears: true
+    inheritance_from_parent_rule: true
+    age_gate_eq_18: true
+    rxnorm_pin_alignment_and_drift_detection: true
+    fhir_r5_profile_compliance: true
+    deterministic_id_derivation: true
+    artifact_canonicalization: true
+    audit_log_append_only: true
+    post_gate_2_reference_immutability: true
+    superseded_artifacts: true
+    conflict_routing_to_panel_chair: true
+    adr_to_amend: ADR-HTN-001 D2, D3, D5, D8, D9, D10, D11, D14, D15

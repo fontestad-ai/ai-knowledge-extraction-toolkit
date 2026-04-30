@@ -1,0 +1,1360 @@
+# =============================================================================
+# cds-hooks-services-htn.yaml
+# -----------------------------------------------------------------------------
+# Standalone schema for the closed seven-service CDS Hooks service set
+# emitted by `cds-hooks-package-htn` at Phase 22 (P22) and consumed as
+# the `cdsh` member of the Gate-3 bundle by `safety-case-attest`.
+#
+# This file is the contract for:
+#   - The closed seven-service identity set (htn-bp-stage-and-confirm,
+#     htn-prevent-risk-and-threshold, htn-pharm-first-line-check,
+#     htn-pregnancy-denylist, htn-resistant-workup, htn-secondary-screen,
+#     htn-hbpm-discharge).
+#   - The closed hook-type and posture enums.
+#   - The closed attending-override pattern denylist (22 patterns
+#     mechanically scanned and rejected at every level of the descriptor
+#     JSON tree).
+#   - The `htn-pregnancy-denylist`-specific constraint block (hook type
+#     `order-select` only; posture `hard-refuse` only; no soft-warning
+#     indicator; no `documentationOnly`; no permissive `suggestions[]`;
+#     pregnancy value-set in prefetch; coverage floor on the denylist
+#     branch ≥ 99.0%; two-person rule witnesses at both Gate 1 and
+#     Gate 2; `enabled: true` unconditionally).
+#   - The per-service descriptor shape (bound libraries, prefetch,
+#     indicator set, suggestions presence flag, age gate, intended-use
+#     population filter, two-person witnesses, fixity).
+#   - The per-service descriptor canonicalization rule
+#     (RFC 8785 JCS with `fixity` excluded; SHA-256 over canonical
+#     bytes).
+#   - The service-set manifest shape (closed seven entries; the
+#     `service_set_sha256` that becomes the input to the Gate-3
+#     bundle's `cdsh` member).
+#   - Post-package descriptor immutability rules (descriptors are
+#     immutable until the next P22 run against a new Library content
+#     hash or a new manifest version; mutation attempts are tamper-
+#     evident).
+#
+# Posture: caution over velocity, fidelity over coverage,
+# hard-refusal-on-pregnancy over attending-override. Pregnancy
+# denylist is `order-select` + `hard-refuse` with no attending-override
+# under any circumstance. PCE-legacy never feeds CDS. Age gate ≥ 18 on
+# every service.
+#
+# This file does NOT contain CQL bytes, terminology bytes, or
+# institutional EHR adapters. It is the wiring-layer contract between
+# Gate-2-finalized Libraries and the EHR's CDS Hooks runtime.
+#
+# Authority:
+#   - ADR-HTN-001 D5 (PREVENT canonical risk function)
+#   - ADR-HTN-001 D8 (pregnancy hard-block enforced at order-select)
+#   - ADR-HTN-001 D9 (three non-overridable human gates; this schema
+#     governs the wiring surface that Gate 2 ratifies and Gate 3
+#     re-attests)
+#   - ADR-HTN-001 D10 (PHI fail-closed; the prefetch queries reference
+#     manifest-pinned value-sets and descriptor metadata records no
+#     patient-identifying content)
+#   - ADR-HTN-001 D15 (drift detection; descriptor SHAs bind to Library
+#     content hashes)
+#   - Framework spec §7 (CDS Hooks services; the canonical seven
+#     services; pregnancy denylist as `order-select`)
+#   - Framework spec §8 (hazards; H-01 mitigation requires the wiring
+#     this schema constrains)
+#   - `cds-hooks-package-htn` SKILL.md (the only authorized writer)
+#   - Parent framework rules: `god-session`, `human-authorization`,
+#     `native-ux-tools`
+#
+# Relationship to neighboring schemas (separate files, referenced by
+# $ref or by content-hash pointer):
+#   - schemas/recommendation-record-htn.yaml  (downstream consumers of
+#                                              records that are
+#                                              materialized into
+#                                              service descriptors via
+#                                              the bound Libraries)
+#   - schemas/atomic-unit.yaml                (atomic-unit ids may be
+#                                              cited in descriptor
+#                                              metadata for traceability)
+#   - schemas/sair.yaml                       (referenced for source
+#                                              anchors the descriptor's
+#                                              metadata may cite)
+#   - schemas/gate2-register.yaml             (Library finalization +
+#                                              hard-block-invariant
+#                                              verification are
+#                                              preconditions; the
+#                                              `cds_hooks_service_ids_wired[]`
+#                                              claim from Gate 2 is
+#                                              ratified by descriptors
+#                                              under this schema)
+#   - schemas/safety-case-htn.yaml            (per-hazard mitigations of
+#                                              kind `cds-hooks-service`
+#                                              cite the descriptors
+#                                              under this schema; the
+#                                              Safety Case's `SC-INV-09`
+#                                              and `SC-INV-23` are
+#                                              recomputed against this
+#                                              schema's invariants)
+#   - schemas/gate3-attestation.yaml          (downstream consumer; the
+#                                              service-set manifest +
+#                                              per-service descriptors
+#                                              become the `cdsh` bundle
+#                                              member at Gate 3)
+#   - schemas/guideline-manifest-hbp-2025.yaml (per-build manifest;
+#                                              `intended_use.age_min_inclusive`
+#                                              (=18), `risk_engine.name`
+#                                              (=PREVENT), pregnancy
+#                                              value-set id, tsa_list,
+#                                              and `tools_lock` are
+#                                              consulted)
+# =============================================================================
+
+$schema: "https://json-schema.org/draft/2020-12/schema"
+$id: "https://aiwg.io/cpg-htn-2025-acc-aha/schemas/cds-hooks-services-htn.yaml"
+title: "CdsHooksServicesHTN"
+description: >
+  Auditable, immutable-once-built, deterministic-SHA-bound contract
+  for the closed seven-service CDS Hooks service set produced by
+  `cds-hooks-package-htn`. Encodes the closed hook-type and posture
+  enums, the closed attending-override pattern denylist as a
+  schema-level invariant, the `htn-pregnancy-denylist`-specific
+  constraint block, the per-service descriptor shape and
+  canonicalization rule, the service-set manifest shape, and the
+  post-package descriptor immutability rules.
+version: "1.0.0"
+schema_lifecycle: stable
+last_reviewed: "HUMAN_FILL: ISO-8601 date of most recent panel review of this schema"
+authority:
+  adr: ADR-HTN-001
+  framework: cpg-htn-2025-acc-aha
+  parent_framework: aiwg-training
+license: MIT
+
+# -----------------------------------------------------------------------------
+# 1. POLICY (normative)
+# -----------------------------------------------------------------------------
+
+policy:
+
+  closed_service_set:
+    rule: >
+      The service set MUST contain exactly the seven services
+      enumerated in §2.1, each appearing exactly once. No service
+      may be added, removed, renamed, or reordered at this schema's
+      level. Validators MUST refuse documents missing any of the
+      seven or containing duplicates.
+      Institutional extensions go to a separate `extensions[]` array
+      whose presence is explicitly opted in by the manifest's
+      `cds_extensions_authorized == true` (default false).
+
+  closed_hook_type_and_posture:
+    rule: >
+      Every service's `hook` and `posture` MUST be members of the
+      closed enums in §2.2 and §2.3. Per-service constraints in §2.4
+      pin specific hook + posture combinations per service id;
+      validators MUST enforce both schema-level enum membership and
+      per-service constraint compliance.
+
+  attending_override_denylist:
+    rule: >
+      Every descriptor MUST be free of attending-override semantics.
+      Validators MUST recursively scan every key and every string
+      value in the descriptor JSON tree (case-insensitive after
+      Unicode NFC) against the closed pattern set in §2.5
+      (AttendingOverridePattern). Any match BLOCKs the build and
+      emits an `attending-override-pattern-detected` audit event.
+      The pattern set is closed; new patterns are added only by
+      ADR-HTN-001 amendment under panel-chair signoff.
+
+  pregnancy_hard_block:
+    rule: >
+      `htn-pregnancy-denylist` MUST satisfy every constraint in §3.7
+      (PregnancyDenylistConstraints): hook type `order-select` only;
+      posture `hard-refuse` only; `card.indicator` set restricted to
+      {`critical`}; `suggestions[]` empty on the denylist branch;
+      `documentationOnly` flag absent; `enabled: true` unconditionally;
+      bound Library `PregnancyHTN` with verifying reference test
+      passing; coverage floor on the denylist branch ≥ 99.0%;
+      two-person rule witnesses at both Gate 1 (MFM + clinical
+      pharmacology) and Gate 2; prefetch query references the
+      manifest-pinned pregnancy value-set id. Any deviation is a
+      release blocker. No soft-warning posture is permitted on this
+      service under any circumstance.
+
+  pce_legacy_never_feeds_cds:
+    rule: >
+      No bound Library on any descriptor may carry
+      `bound_risk_engine.name == "PCE-legacy"` or
+      `bound_risk_engine.legacy_only == true`. PREVENT is canonical
+      per ADR-HTN-001 D5; any PCE-legacy reference is a release
+      blocker.
+
+  age_gate_eq_18:
+    rule: >
+      Every descriptor MUST declare `age_gate_min_inclusive == 18`
+      (matching the manifest's `intended_use.age_min_inclusive`).
+      Lower age gates are a release blocker; higher age gates require
+      a manifest amendment under panel-chair signoff.
+
+  library_content_hash_binding:
+    rule: >
+      Every `bound_libraries[].library_content_hash` MUST recompute
+      against the live Library snapshot at packaging time and at
+      validation time. Drift indicates Library mutation since Gate 2
+      and is a release blocker.
+
+  descriptor_canonicalization:
+    rule: >
+      Every descriptor's `fixity.descriptor_sha256` MUST equal SHA-256
+      of the JCS-canonical (RFC 8785) form of the descriptor with
+      `fixity` excluded. Validators recompute and compare; mismatch
+      is a release blocker.
+
+  service_set_manifest_canonicalization:
+    rule: >
+      The service-set manifest's `service_set_sha256` MUST equal
+      SHA-256 of the JCS-canonical form of `services[]` ordered by
+      service id ascending. Validators recompute and compare;
+      mismatch is a release blocker.
+
+  two_person_witnesses_recorded:
+    rule: >
+      Every descriptor MUST record in `metadata.two_person_witnesses[]`
+      the Gate-1 and Gate-2 reviewer ids whose signoffs cover the
+      bound content. For `htn-pregnancy-denylist`, the witnesses MUST
+      include at least one MFM (or obstetric-medicine) reviewer and
+      one clinical-pharmacology reviewer at BOTH Gate 1 AND Gate 2.
+
+  post_package_immutability:
+    rule: >
+      Once a descriptor is recorded with `state == "built"` and
+      `fixity.descriptor_sha256` populated, neither the descriptor's
+      content nor its `fixity` may be mutated. Any change to the
+      underlying Library content hash, the bound risk engine, the
+      hook type, the posture, or any other descriptor field
+      invalidates the recorded SHA and forces a fresh packaging run
+      against a new Library snapshot or a new manifest version. The
+      old descriptor is retained immutably for audit when superseded.
+
+  superseded_descriptors:
+    rule: >
+      A descriptor whose underlying Library content hash changes is
+      marked `state == "superseded"` with `superseded_by_descriptor_sha256`
+      pointing to the new descriptor. The chain is monotone; cycles
+      are forbidden.
+
+  enabled_unconditionally:
+    rule: >
+      Every descriptor MUST set `enabled: true` unconditionally; no
+      runtime toggle, feature flag, or environment-conditional
+      disable is permitted at packaging time. EHR-side workflow
+      scoping is the institution's responsibility and does not
+      propagate to the descriptor's `enabled` flag.
+
+# -----------------------------------------------------------------------------
+# 2. CLOSED ENUMERATIONS
+# -----------------------------------------------------------------------------
+
+$defs:
+
+  # ---------------------------------------------------------------------------
+  # 2.1 Closed service ids (the seven-service set)
+  # ---------------------------------------------------------------------------
+  CdsHooksServiceId:
+    type: string
+    enum:
+      - htn-bp-stage-and-confirm
+      - htn-prevent-risk-and-threshold
+      - htn-pharm-first-line-check
+      - htn-pregnancy-denylist
+      - htn-resistant-workup
+      - htn-secondary-screen
+      - htn-hbpm-discharge
+
+  # ---------------------------------------------------------------------------
+  # 2.2 Closed hook types
+  # ---------------------------------------------------------------------------
+  CdsHooksHookType:
+    type: string
+    enum:
+      - order-select
+      - order-sign
+      - medication-prescribe
+      - patient-view
+      - encounter-discharge
+
+  # ---------------------------------------------------------------------------
+  # 2.3 Closed posture enum
+  # ---------------------------------------------------------------------------
+  CdsHooksPosture:
+    type: string
+    enum:
+      - hard-refuse
+      - soft-warning      # accepted only on non-denylist branches per per-service constraints; never on htn-pregnancy-denylist
+      - informational
+
+  # ---------------------------------------------------------------------------
+  # 2.4 Per-service hook + posture constraint matrix (closed)
+  # ---------------------------------------------------------------------------
+  PerServiceConstraintMatrix:
+    description: |
+      Validators MUST enforce the per-service constraint matrix below,
+      in addition to the schema-level enum membership rules. The matrix
+      is closed; new rows or relaxations require ADR-HTN-001 amendment.
+
+      htn-bp-stage-and-confirm:
+        - hook       MUST be: patient-view
+        - posture    MUST be: informational
+        - bound_libs MUST be: [HBPStaging]
+        - asserts    MUST include: bp-confirmation-out-of-office
+
+      htn-prevent-risk-and-threshold:
+        - hook       MUST be: patient-view
+        - posture    MUST be: informational
+        - bound_libs MUST be: [PreventRisk, TreatmentThreshold]
+        - asserts    MUST include: prevent-canonical-binding,
+                                   pce-legacy-never-feeds-cql
+
+      htn-pharm-first-line-check:
+        - hook       MUST be: order-select
+        - posture    MUST be: hard-refuse  (denylist branches)
+                              soft-warning (older-adult orthostasis branch ONLY)
+                              informational (general first-line guidance branch ONLY)
+        - bound_libs MUST be: [FirstLineSelection, SpecialPopulationModifiers]
+        - asserts    MUST include: aki-triple-whammy-warning,
+                                   hyperkalemia-aceiarb-mra-warning
+
+      htn-pregnancy-denylist:
+        - hook       MUST be: order-select          (no exceptions)
+        - posture    MUST be: hard-refuse           (no exceptions)
+        - bound_libs MUST be: [PregnancyHTN]
+        - asserts    MUST include: pregnancy-denylist-order-select-hard-refuse
+        - additional constraints in §3.7 (PregnancyDenylistConstraints)
+
+      htn-resistant-workup:
+        - hook       MUST be: patient-view
+        - posture    MUST be: informational
+        - bound_libs MUST be: [ResistantHTN]
+        - asserts    MUST include: aldosteronism-screen-resistant
+
+      htn-secondary-screen:
+        - hook       MUST be: patient-view
+        - posture    MUST be: informational
+        - bound_libs MUST be: [SecondaryHTNTriggers]
+
+      htn-hbpm-discharge:
+        - hook       MUST be: encounter-discharge
+        - posture    MUST be: informational
+        - bound_libs MUST be: [HBPStaging]
+        - asserts    MUST include: bp-confirmation-out-of-office
+
+  # ---------------------------------------------------------------------------
+  # 2.5 Closed attending-override pattern denylist
+  # ---------------------------------------------------------------------------
+  AttendingOverridePattern:
+    type: string
+    enum:
+      - permit_on_attending_override
+      - permitOnAttendingOverride
+      - attending_override
+      - attendingOverride
+      - override_role
+      - overrideRole
+      - override_reason_required
+      - overrideReasonRequired
+      - attending_can_override
+      - attendingCanOverride
+      - override_with_attending_co_sign
+      - overrideWithAttendingCoSign
+      - permit_on_co_sign
+      - permitOnCoSign
+      - override_permitted
+      - overridePermitted
+      - suppressible
+      - suppressibleByRole
+      - documentationOnly
+      - documentation_only
+      - soft_warning
+      - softWarning
+    description: >
+      Closed pattern set. Validators MUST recursively scan every key
+      and every string value in the descriptor JSON tree (and in
+      `prefetch` template values) for any of these patterns,
+      case-insensitive after Unicode NFC. Any match BLOCKs the
+      build. The set is closed at the schema level; additions require
+      ADR-HTN-001 amendment under panel-chair signoff.
+      NOTE: the `soft_warning` / `softWarning` patterns are denied on
+      ALL descriptors at the field-name and descriptor-string-value
+      level; the `posture: soft-warning` enum value is permitted on
+      non-denylist branches per the per-service constraint matrix in
+      §2.4. Validators distinguish the two: the `posture` field is
+      checked against the enum, while string values that contain the
+      pattern (e.g., descriptive text leaking through) are blocked.
+
+  # ---------------------------------------------------------------------------
+  # 2.6 Library names (closed; mirrored from gate2-register.yaml)
+  # ---------------------------------------------------------------------------
+  LibraryName:
+    type: string
+    enum:
+      - HBPStaging
+      - PreventRisk
+      - TreatmentThreshold
+      - FirstLineSelection
+      - SpecialPopulationModifiers
+      - PregnancyHTN
+      - ResistantHTN
+      - SecondaryHTNTriggers
+      - HypertensiveUrgencyEmergency
+
+  # ---------------------------------------------------------------------------
+  # 2.7 Hard-block invariant kinds (mirrored from gate2-register.yaml)
+  # ---------------------------------------------------------------------------
+  HardBlockInvariantKind:
+    type: string
+    enum:
+      - pregnancy-denylist-order-select-hard-refuse
+      - pregnancy-firstline-restricted
+      - pce-legacy-never-feeds-cql
+      - prevent-canonical-binding
+      - age-gate-ge-18
+      - aki-triple-whammy-warning
+      - hyperkalemia-aceiarb-mra-warning
+      - beta-blocker-no-abrupt-discontinuation
+      - older-adult-orthostasis-monitoring
+      - aldosteronism-screen-resistant
+      - bp-confirmation-out-of-office
+
+  # ---------------------------------------------------------------------------
+  # 2.8 Card indicator levels (CDS Hooks 2.0)
+  # ---------------------------------------------------------------------------
+  CardIndicator:
+    type: string
+    enum:
+      - info
+      - warning
+      - critical
+      - hard-stop
+
+  # ---------------------------------------------------------------------------
+  # 2.9 Population filter (closed)
+  # ---------------------------------------------------------------------------
+  PopulationFilter:
+    type: string
+    enum:
+      - general-adult
+      - older-adult
+      - pregnant
+      - postpartum
+      - ckd
+      - t2dm
+      - hf-rEF
+      - hf-pEF
+      - cad
+      - post-stroke
+      - secondary-htn-suspected
+      - urgency
+      - emergency
+      - resistant-htn
+      - all-build-records
+
+  # ---------------------------------------------------------------------------
+  # 2.10 Out-of-scope populations (closed)
+  # ---------------------------------------------------------------------------
+  OutOfScopePopulation:
+    type: string
+    enum:
+      - pediatric
+      - acute-stroke-blood-pressure
+      - perioperative-blood-pressure
+      - bp-management-in-icu-shock
+
+  # ---------------------------------------------------------------------------
+  # 2.11 Reviewer roles (mirrored; relevant subset for two-person witnesses)
+  # ---------------------------------------------------------------------------
+  ReviewerRole:
+    type: string
+    enum:
+      - hypertension-specialist
+      - clinical-pharmacologist
+      - mfm-or-obstetric-medicine
+      - geriatrician
+      - primary-care-clinician
+      - clinical-informaticist
+      - nephrology
+      - endocrinology
+      - emergency-medicine
+      - critical-care
+      - panel-chair
+      - medical-director
+
+  # ---------------------------------------------------------------------------
+  # 2.12 Risk engine (closed)
+  # ---------------------------------------------------------------------------
+  RiskEngineName:
+    type: string
+    enum:
+      - PREVENT
+      - PCE-legacy   # MUST NEVER appear in any bound Library; enum exists only to make the deny rule machine-checkable
+
+  # ---------------------------------------------------------------------------
+  # 2.13 Descriptor lifecycle states
+  # ---------------------------------------------------------------------------
+  DescriptorState:
+    type: string
+    enum:
+      - draft
+      - built
+      - verified
+      - superseded
+      - withdrawn
+
+  # ---------------------------------------------------------------------------
+  # 2.14 Service-set lifecycle states
+  # ---------------------------------------------------------------------------
+  ServiceSetState:
+    type: string
+    enum:
+      - draft
+      - built
+      - verified
+      - superseded
+      - withdrawn
+
+  # ---------------------------------------------------------------------------
+  # 2.15 Audit-event kinds
+  # ---------------------------------------------------------------------------
+  AuditEventKind:
+    type: string
+    enum:
+      - service-built
+      - service-verified
+      - service-rejected
+      - service-superseded
+      - service-withdrawn
+      - service-set-built
+      - service-set-verified
+      - attending-override-pattern-detected
+      - pregnancy-denylist-soft-warning-detected
+      - pregnancy-denylist-hook-type-mismatch
+      - pce-legacy-binding-detected
+      - documentation-only-detected
+      - age-gate-mismatch
+      - library-content-hash-drift
+      - service-set-cardinality-mismatch
+      - pregnancy-witnesses-missing
+      - descriptor-sha-nondeterministic
+      - descriptor-mutation-attempt
+
+  # ---------------------------------------------------------------------------
+  # 2.16 Verification methods
+  # ---------------------------------------------------------------------------
+  VerificationMethod:
+    type: string
+    enum:
+      - reference-test-pack-pass
+      - library-snapshot-shape-match
+      - service-descriptor-shape-match
+      - prefetch-value-set-resolved
+      - attending-override-pattern-scan-clean
+      - canonical-sha-match
+
+# -----------------------------------------------------------------------------
+# 3. STRUCTURED TYPES
+# -----------------------------------------------------------------------------
+
+  # ---------------------------------------------------------------------------
+  # 3.1 BoundLibrary
+  # ---------------------------------------------------------------------------
+  BoundLibrary:
+    type: object
+    additionalProperties: false
+    required:
+      - library_id
+      - library_name
+      - library_content_hash
+      - gate2_register_path
+      - gate2_register_sha256
+      - asserts_invariant_kinds
+      - bound_risk_engine
+    properties:
+      library_id:
+        type: string
+        pattern: "^lib-[0-9a-f]{16}$"
+      library_name:        { $ref: "#/$defs/LibraryName" }
+      library_content_hash:
+        type: string
+        pattern: "^[0-9a-f]{64}$"
+        description: >
+          The Gate-2-finalized Library content hash. Validators MUST
+          recompute against the live snapshot at validation time;
+          drift is a release blocker.
+      gate2_register_path:    { type: string }
+      gate2_register_sha256:  { type: string, pattern: "^[0-9a-f]{64}$" }
+      asserts_invariant_kinds:
+        type: array
+        minItems: 0
+        items: { $ref: "#/$defs/HardBlockInvariantKind" }
+      bound_risk_engine:
+        type: object
+        additionalProperties: false
+        required: [name, legacy_only]
+        properties:
+          name:        { $ref: "#/$defs/RiskEngineName" }
+          legacy_only: { type: boolean }
+      coverage_pct:
+        type: number
+        minimum: 0.0
+        maximum: 100.0
+        description: >
+          Synthea branch coverage at packaging time, copied from the
+          Library's Gate-2 coverage_summary. For
+          `htn-pregnancy-denylist`, the denylist-branch-specific
+          coverage is recorded in
+          `coverage_pct_denylist_branch` and validated separately.
+      coverage_pct_denylist_branch:
+        type: [number, "null"]
+        minimum: 0.0
+        maximum: 100.0
+        description: >
+          Required (non-null) on `htn-pregnancy-denylist`'s bound
+          Library `PregnancyHTN`; MUST be ≥ 99.0. Null on all other
+          services.
+
+  # ---------------------------------------------------------------------------
+  # 3.2 PrefetchTemplate
+  # ---------------------------------------------------------------------------
+  PrefetchTemplate:
+    type: object
+    additionalProperties:
+      type: string
+    description: >
+      CDS Hooks prefetch template (FHIR query strings keyed by name).
+      Validators MUST scan every value for AttendingOverridePattern
+      matches and reject any descriptor where a match is found.
+      For `htn-pregnancy-denylist`, the prefetch MUST contain a key
+      `pregnancy` whose query references the manifest-pinned
+      pregnancy value-set id; absence is a release blocker.
+
+  # ---------------------------------------------------------------------------
+  # 3.3 TwoPersonWitness
+  # ---------------------------------------------------------------------------
+  TwoPersonWitness:
+    type: object
+    additionalProperties: false
+    required: [role, reviewer_id, gate]
+    properties:
+      role:        { $ref: "#/$defs/ReviewerRole" }
+      reviewer_id: { type: string, pattern: "^rev-[0-9a-f]{16}$" }
+      gate:
+        type: string
+        enum: [gate-1, gate-2]
+      cohort_id:
+        type: [string, "null"]
+        pattern: "^cohort-[0-9a-f]{16}$|^null$"
+
+  # ---------------------------------------------------------------------------
+  # 3.4 Metadata
+  # ---------------------------------------------------------------------------
+  DescriptorMetadata:
+    type: object
+    additionalProperties: false
+    required:
+      - build_run_id
+      - build_version_label
+      - manifest_payload_sha256
+      - gate1_cohort_ids
+      - gate2_cohort_ids
+      - two_person_witnesses
+      - prov_activity_id
+    properties:
+      build_run_id:           { type: string, format: uuid }
+      build_version_label:
+        type: string
+        pattern: "^v[0-9]+\\.[0-9]+\\.[0-9]+\\+ACC-AHA-2025\\+US\\+[0-9]{4}-[0-9]{2}-[0-9]{2}$"
+      manifest_payload_sha256: { type: string, pattern: "^[0-9a-f]{64}$" }
+      gate1_cohort_ids:
+        type: array
+        minItems: 1
+        items: { type: string, pattern: "^cohort-[0-9a-f]{16}$" }
+      gate2_cohort_ids:
+        type: array
+        minItems: 1
+        items: { type: string, pattern: "^cohort-[0-9a-f]{16}$" }
+      two_person_witnesses:
+        type: array
+        minItems: 2
+        items: { $ref: "#/$defs/TwoPersonWitness" }
+      prov_activity_id:       { type: string, minLength: 1 }
+      sair_anchor_record_ids:
+        type: array
+        items: { type: string, pattern: "^rec-[0-9a-f]{16}$" }
+      sair_anchor_atomic_unit_ids:
+        type: array
+        items: { type: string, pattern: "^au-[0-9a-f]{16}$" }
+
+  # ---------------------------------------------------------------------------
+  # 3.5 Fixity
+  # ---------------------------------------------------------------------------
+  DescriptorFixity:
+    type: object
+    additionalProperties: false
+    required: [descriptor_sha256, computed_at, canonical_form]
+    properties:
+      descriptor_sha256:
+        type: string
+        pattern: "^[0-9a-f]{64}$"
+        description: SHA-256 of the JCS-canonical form of the descriptor with `fixity` excluded.
+      computed_at:    { type: string, format: date-time }
+      canonical_form: { type: string, enum: [json-canonical-rfc8785] }
+
+  # ---------------------------------------------------------------------------
+  # 3.6 ServiceDescriptor (root descriptor type)
+  # ---------------------------------------------------------------------------
+  ServiceDescriptor:
+    type: object
+    additionalProperties: false
+    required:
+      - service_id
+      - title
+      - description
+      - hook
+      - posture
+      - enabled
+      - bound_libraries
+      - prefetch
+      - indicator_set
+      - suggestions_present
+      - documentation_only
+      - age_gate_min_inclusive
+      - intended_use_population_filter
+      - out_of_scope_populations
+      - metadata
+      - state
+      - fixity
+    properties:
+      service_id:    { $ref: "#/$defs/CdsHooksServiceId" }
+      title:
+        type: string
+        minLength: 1
+      description:
+        type: string
+        minLength: 1
+      hook:          { $ref: "#/$defs/CdsHooksHookType" }
+      posture:       { $ref: "#/$defs/CdsHooksPosture" }
+      enabled:
+        type: boolean
+        const: true
+        description: >
+          MUST be true unconditionally. EHR-side workflow scoping is
+          the institution's responsibility and does not propagate to
+          this flag (`enabled_unconditionally`).
+      bound_libraries:
+        type: array
+        minItems: 1
+        items: { $ref: "#/$defs/BoundLibrary" }
+      prefetch:      { $ref: "#/$defs/PrefetchTemplate" }
+      indicator_set:
+        type: array
+        minItems: 1
+        items: { $ref: "#/$defs/CardIndicator" }
+        description: >
+          Closed-by-policy indicator set per service. For
+          `htn-pregnancy-denylist`, MUST equal exactly
+          `["critical"]`. For `hard-refuse` postures on other
+          services, MUST be a subset of `["critical", "hard-stop"]`.
+          For `informational` postures, MUST be `["info"]`. For
+          `soft-warning` postures, MUST be `["warning"]`.
+      suggestions_present:
+        type: boolean
+        description: >
+          MUST be `false` for the denylist branch on
+          `htn-pregnancy-denylist`. Validators interpret this flag in
+          conjunction with the descriptor's hook + posture + branch
+          set; when the descriptor has multiple branches (e.g.,
+          `htn-pharm-first-line-check` with denylist + monitoring +
+          informational branches), `suggestions_present` is the
+          aggregate disjunction over branches and an additional
+          per-branch field (recorded in `metadata.prov_activity_id`'s
+          PROV evidence) records the per-branch values.
+      documentation_only:
+        type: boolean
+        const: false
+        description: MUST be false. Documentation-only bypass is forbidden (`attending_override_denylist`).
+      age_gate_min_inclusive:
+        type: integer
+        const: 18
+      intended_use_population_filter:
+        type: array
+        minItems: 1
+        items: { $ref: "#/$defs/PopulationFilter" }
+      out_of_scope_populations:
+        type: array
+        minItems: 1
+        items: { $ref: "#/$defs/OutOfScopePopulation" }
+      metadata:                 { $ref: "#/$defs/DescriptorMetadata" }
+      state:                    { $ref: "#/$defs/DescriptorState" }
+      superseded_by_descriptor_sha256:
+        type: [string, "null"]
+        pattern: "^[0-9a-f]{64}$|^null$"
+      fixity:                   { $ref: "#/$defs/DescriptorFixity" }
+
+  # ---------------------------------------------------------------------------
+  # 3.7 PregnancyDenylistConstraints (cross-field invariants applied
+  #     when service_id == "htn-pregnancy-denylist")
+  # ---------------------------------------------------------------------------
+  # The constraint block is documentation embedded in the schema for
+  # validators; the JSON Schema itself enforces the values via the
+  # generic ServiceDescriptor type plus the cross-field invariants in §5.
+  # ---------------------------------------------------------------------------
+  PregnancyDenylistConstraints:
+    description: |
+      For ServiceDescriptor whose service_id == "htn-pregnancy-denylist",
+      validators MUST enforce ALL of the following:
+
+      a) hook == "order-select"
+      b) posture == "hard-refuse"
+      c) enabled == true
+      d) documentation_only == false
+      e) suggestions_present == false
+      f) indicator_set == ["critical"]   (exactly; no other elements)
+      g) age_gate_min_inclusive == 18
+      h) intended_use_population_filter MUST contain "pregnant" and "postpartum"
+         (no other populations may be included; the filter is exact-match)
+      i) out_of_scope_populations MUST contain "pediatric"
+      j) bound_libraries.length == 1
+      k) bound_libraries[0].library_name == "PregnancyHTN"
+      l) bound_libraries[0].asserts_invariant_kinds MUST contain
+         "pregnancy-denylist-order-select-hard-refuse"
+      m) bound_libraries[0].coverage_pct_denylist_branch MUST be non-null AND >= 99.0
+      n) bound_libraries[0].bound_risk_engine.name == "PREVENT" OR the Library
+         declares no risk-engine binding (PregnancyHTN does not bind the risk
+         engine; the constraint is "MUST NOT be PCE-legacy")
+      o) prefetch MUST contain a key "pregnancy" whose template references
+         the manifest-pinned pregnancy value-set id (an opaque string token
+         resolved at validation against
+         `manifest.intended_use.pregnancy_value_set_id`)
+      p) metadata.two_person_witnesses[] MUST contain:
+            - at least one role in {"mfm-or-obstetric-medicine"} at gate-1
+            - at least one role in {"clinical-pharmacologist"}    at gate-1
+            - at least one role in {"mfm-or-obstetric-medicine"} at gate-2
+            - at least one role in {"clinical-pharmacologist"}    at gate-2
+      q) NO key or string value anywhere in the descriptor JSON tree
+         (case-insensitive after Unicode NFC) matches any
+         AttendingOverridePattern from §2.5.
+
+  # ---------------------------------------------------------------------------
+  # 3.8 Audit event
+  # ---------------------------------------------------------------------------
+  AuditEvent:
+    type: object
+    additionalProperties: false
+    required: [event_id, occurred_at, kind, actor_id, payload_sha256]
+    properties:
+      event_id:        { type: string, pattern: "^evt-[0-9a-f]{16}$" }
+      occurred_at:     { type: string, format: date-time }
+      kind:            { $ref: "#/$defs/AuditEventKind" }
+      actor_id:        { type: string }
+      payload_sha256:  { type: string, pattern: "^[0-9a-f]{64}$" }
+      prov_activity_id:{ type: [string, "null"] }
+
+  # ---------------------------------------------------------------------------
+  # 3.9 ServiceManifestEntry (one per service in the manifest)
+  # ---------------------------------------------------------------------------
+  ServiceManifestEntry:
+    type: object
+    additionalProperties: false
+    required: [id, descriptor_path, descriptor_sha256]
+    properties:
+      id:                 { $ref: "#/$defs/CdsHooksServiceId" }
+      descriptor_path:
+        type: string
+        description: Relative path to the per-service descriptor file at packaging time.
+      descriptor_sha256:  { type: string, pattern: "^[0-9a-f]{64}$" }
+
+# -----------------------------------------------------------------------------
+# 4. ROOT TYPES
+# -----------------------------------------------------------------------------
+# The schema defines TWO root types:
+#   - ServiceDescriptor (per-service file)
+#   - ServiceSetManifest (cohort-wide manifest)
+#
+# JSON Schema does not natively support multi-root files; consumers
+# select the root type by file path:
+#   - `work/<run_id>/cds-hooks/<service-id>.json`     → ServiceDescriptor
+#   - `work/<run_id>/cds-hooks/manifest.json`         → ServiceSetManifest
+#
+# The `type` field below describes the ServiceSetManifest as the
+# document-level root; per-service descriptors are validated against
+# `#/$defs/ServiceDescriptor` directly.
+# -----------------------------------------------------------------------------
+
+type: object
+title: ServiceSetManifest
+additionalProperties: false
+required:
+  - schema_version
+  - build_run_id
+  - manifest_version
+  - guideline_manifest_ref
+  - services
+  - service_set_sha256
+  - state
+  - audit_log
+  - fixity
+properties:
+
+  schema_version:
+    type: string
+    const: "1.0.0"
+
+  build_run_id:        { type: string, format: uuid }
+
+  manifest_version:
+    type: string
+    pattern: "^[0-9]+\\.[0-9]+\\.[0-9]+$"
+
+  predecessor_service_set_sha256:
+    type: [string, "null"]
+    pattern: "^[0-9a-f]{64}$|^null$"
+
+  guideline_manifest_ref:
+    type: string
+    description: Pointer to the active `schemas/guideline-manifest-hbp-2025.yaml` instance.
+
+  # ---------------------------------------------------------------------------
+  # 4.1 Services (closed seven, exactly once each)
+  # ---------------------------------------------------------------------------
+  services:
+    type: array
+    minItems: 7
+    maxItems: 7
+    items: { $ref: "#/$defs/ServiceManifestEntry" }
+
+  # ---------------------------------------------------------------------------
+  # 4.2 Service-set fixity
+  # ---------------------------------------------------------------------------
+  service_set_sha256:
+    type: string
+    pattern: "^[0-9a-f]{64}$"
+    description: >
+      SHA-256 of the JCS-canonical form of `services[]` ordered by
+      `id` ascending. Validators recompute and compare; mismatch is
+      a release blocker.
+
+  # ---------------------------------------------------------------------------
+  # 4.3 State
+  # ---------------------------------------------------------------------------
+  state: { $ref: "#/$defs/ServiceSetState" }
+
+  # ---------------------------------------------------------------------------
+  # 4.4 Audit log (append-only)
+  # ---------------------------------------------------------------------------
+  audit_log:
+    type: array
+    items: { $ref: "#/$defs/AuditEvent" }
+
+  # ---------------------------------------------------------------------------
+  # 4.5 Fixity (manifest-level)
+  # ---------------------------------------------------------------------------
+  fixity:
+    type: object
+    additionalProperties: false
+    required: [manifest_sha256, computed_at, canonical_form]
+    properties:
+      manifest_sha256:
+        type: string
+        pattern: "^[0-9a-f]{64}$"
+        description: >
+          SHA-256 of the JCS-canonical form of THIS document with
+          `fixity` excluded. The hash MUST be deterministic across
+          re-runs given identical inputs.
+      computed_at:    { type: string, format: date-time }
+      canonical_form: { type: string, enum: [json-canonical-rfc8785] }
+
+  # ---------------------------------------------------------------------------
+  # 4.6 Optional institutional extensions (off by default)
+  # ---------------------------------------------------------------------------
+  extensions:
+    type: [array, "null"]
+    description: >
+      Institutional service extensions, permitted only if the manifest's
+      `cds_extensions_authorized == true`. Each extension follows the
+      ServiceDescriptor type but is NOT a member of the closed
+      seven-service set. The Gate-3 bundle hash covers the union of
+      `services[]` and `extensions[]` if present.
+    items: { $ref: "#/$defs/ServiceDescriptor" }
+
+# -----------------------------------------------------------------------------
+# 5. CROSS-FIELD INVARIANTS (validators MUST enforce)
+# -----------------------------------------------------------------------------
+
+invariants:
+
+  - id: CDH-INV-01
+    description: >
+      `services[]` MUST contain each `CdsHooksServiceId` from §2.1
+      exactly once. Duplicates or missing ids are a release blocker
+      (closed_service_set).
+
+  - id: CDH-INV-02
+    description: >
+      Every `ServiceManifestEntry.descriptor_sha256` MUST equal the
+      `fixity.descriptor_sha256` of the file at
+      `descriptor_path`, recomputed under JCS at validation time.
+      Mismatch is a release blocker.
+
+  - id: CDH-INV-03
+    description: >
+      `service_set_sha256` MUST equal SHA-256 of the JCS-canonical
+      form of `services[]` ordered by `id` ascending. Validators
+      recompute and compare; mismatch is a release blocker
+      (service_set_manifest_canonicalization).
+
+  - id: CDH-INV-04
+    description: >
+      For every ServiceDescriptor, `fixity.descriptor_sha256` MUST
+      equal SHA-256 of the JCS-canonical form of the descriptor with
+      `fixity` excluded (descriptor_canonicalization). The hash MUST
+      be deterministic across re-runs given identical inputs.
+
+  - id: CDH-INV-05
+    description: >
+      Every ServiceDescriptor's (hook, posture, bound_libraries) MUST
+      satisfy the per-service constraint matrix in §2.4
+      (PerServiceConstraintMatrix). Any deviation is a release blocker.
+
+  - id: CDH-INV-06
+    description: >
+      Every ServiceDescriptor's `enabled` MUST be true unconditionally
+      (`enabled_unconditionally`). Validators MUST refuse `false` or
+      conditional expressions.
+
+  - id: CDH-INV-07
+    description: >
+      Every ServiceDescriptor's `age_gate_min_inclusive` MUST be 18.
+      Lower values are a release blocker (age_gate_eq_18).
+
+  - id: CDH-INV-08
+    description: >
+      Every ServiceDescriptor's `documentation_only` MUST be false
+      (attending_override_denylist).
+
+  - id: CDH-INV-09
+    description: >
+      Every ServiceDescriptor's `bound_libraries[].library_content_hash`
+      MUST recompute against the live Library snapshot at
+      validation time. Drift is a release blocker
+      (library_content_hash_binding).
+
+  - id: CDH-INV-10
+    description: >
+      No bound Library on any ServiceDescriptor may have
+      `bound_risk_engine.name == "PCE-legacy"` OR
+      `bound_risk_engine.legacy_only == true`. PCE-legacy never feeds
+      CDS (pce_legacy_never_feeds_cds).
+
+  - id: CDH-INV-11
+    description: >
+      For every ServiceDescriptor:
+        - posture == "hard-refuse" implies indicator_set ⊆ {"critical","hard-stop"};
+        - posture == "soft-warning" implies indicator_set == ["warning"];
+        - posture == "informational" implies indicator_set == ["info"].
+      Mismatched posture and indicator_set is a release blocker.
+
+  - id: CDH-INV-12
+    description: >
+      Validators MUST recursively scan every key and every string
+      value in every ServiceDescriptor (and in `prefetch` template
+      values) for any AttendingOverridePattern from §2.5
+      (case-insensitive after Unicode NFC). Any match BLOCKs the
+      build and emits an `attending-override-pattern-detected` audit
+      event.
+
+  - id: CDH-INV-13
+    description: >
+      For ServiceDescriptor whose service_id == "htn-pregnancy-denylist",
+      ALL of the constraints in §3.7 (PregnancyDenylistConstraints,
+      items a..q) MUST hold. Any violation BLOCKs the build and emits
+      the corresponding closed audit event from §2.15
+      (`pregnancy-denylist-hook-type-mismatch`,
+      `pregnancy-denylist-soft-warning-detected`,
+      `pregnancy-witnesses-missing`,
+      `attending-override-pattern-detected`,
+      `documentation-only-detected`,
+      `library-content-hash-drift`, etc.).
+
+  - id: CDH-INV-14
+    description: >
+      Every ServiceDescriptor's `metadata.two_person_witnesses[]` MUST
+      include at least one Gate-1 witness AND at least one Gate-2
+      witness. For `htn-pregnancy-denylist`, the witnesses MUST
+      include MFM (or obstetric-medicine) AND clinical pharmacology
+      at BOTH gates (CDH-INV-13 reinforces this with closed
+      role-specific constraints).
+
+  - id: CDH-INV-15
+    description: >
+      Every ServiceDescriptor's `metadata.gate2_cohort_ids[]` MUST
+      resolve to Gate-2 cohort register files in state `finalized`
+      at validation time. Any non-finalized cohort is a release
+      blocker.
+
+  - id: CDH-INV-16
+    description: >
+      Every ServiceDescriptor's `metadata.manifest_payload_sha256`
+      MUST equal the active manifest's `fixity.manifest_sha256` at
+      packaging time. Manifest drift between packaging and
+      validation is a release blocker.
+
+  - id: CDH-INV-17
+    description: >
+      `audit_log[]` MUST be append-only and ordered by `occurred_at`.
+      Validators compute the chained hash of events; out-of-order or
+      missing events indicate tampering and are release blockers.
+
+  - id: CDH-INV-18
+    description: >
+      `fixity.manifest_sha256` MUST equal SHA-256 of the
+      JCS-canonical form of this document with `fixity` excluded.
+      The hash MUST be deterministic across re-runs given identical
+      inputs.
+
+  - id: CDH-INV-19
+    description: >
+      Once a ServiceDescriptor's `state == "built"` and
+      `fixity.descriptor_sha256` is populated, neither the descriptor
+      content nor its `fixity` may be mutated
+      (post_package_immutability). Mutation attempts MUST be detected
+      by SHA recompute and blocked; the audit event
+      `descriptor-mutation-attempt` is emitted.
+
+  - id: CDH-INV-20
+    description: >
+      `predecessor_service_set_sha256` MUST be set whenever this
+      service-set manifest supersedes a prior one. The chain is
+      monotone; cycles are forbidden. Validators MUST resolve and
+      verify against the predecessor's recorded
+      `service_set_sha256`.
+
+  - id: CDH-INV-21
+    description: >
+      `extensions` MAY be non-null only if the active manifest's
+      `cds_extensions_authorized == true`. When present, every entry
+      follows the ServiceDescriptor type and is subject to all
+      schema-level invariants except `closed_service_set`
+      (extensions are NOT members of §2.1). For each extension,
+      hook + posture MUST be permitted by the institution's
+      manifest amendment, and AttendingOverridePattern scanning is
+      enforced.
+
+  - id: CDH-INV-22
+    description: >
+      For every ServiceDescriptor whose posture includes
+      `hard-refuse` (whether on a single branch or aggregated),
+      validators MUST verify that the bound Libraries' Gate-2
+      register entry is `accepted` or `accepted-with-comment` and
+      the verifying reference test for every declared
+      `asserts_invariant_kind` passes. Unverified hard-block
+      mitigations are a release blocker.
+
+  - id: CDH-INV-23
+    description: >
+      Every ServiceDescriptor's `intended_use_population_filter[]`
+      MUST be a non-empty subset of PopulationFilter. For
+      `htn-pregnancy-denylist`, the filter MUST be exactly
+      `["pregnant", "postpartum"]` (set-equal; ordering enforced by
+      JCS canonicalization).
+
+  - id: CDH-INV-24
+    description: >
+      Every ServiceDescriptor's `out_of_scope_populations[]` MUST
+      contain `pediatric`. Validators MUST refuse descriptors that
+      omit pediatric from out-of-scope.
+
+  - id: CDH-INV-25
+    description: >
+      For every ServiceDescriptor of `service_id ==
+      "htn-prevent-risk-and-threshold"`, the bound Library
+      `PreventRisk` MUST declare both
+      `prevent-canonical-binding` AND `pce-legacy-never-feeds-cql`
+      in `asserts_invariant_kinds`, and both MUST verify under their
+      reference tests at validation time.
+
+  - id: CDH-INV-26
+    description: >
+      For every ServiceDescriptor of `service_id ==
+      "htn-pharm-first-line-check"`, the bound Libraries MUST
+      collectively declare both `aki-triple-whammy-warning` AND
+      `hyperkalemia-aceiarb-mra-warning`. The descriptor's
+      indicator_set across hard-refuse branches MUST be a subset of
+      `["critical", "hard-stop"]`.
+
+# =============================================================================
+# 6. WORKED EXAMPLES (shape-correctness fixtures)
+# -----------------------------------------------------------------------------
+# Two examples are provided:
+#   6.1 A ServiceDescriptor for `htn-pregnancy-denylist` (the most-restricted
+#       service; serves as the reference shape for §3.7).
+#   6.2 A ServiceSetManifest covering the closed seven-service set.
+#
+# EVERY field whose value can ONLY come from a real Library snapshot,
+# real Gate-1 / Gate-2 cohort, real manifest, or real KMS-bound build
+# is marked `HUMAN_FILL` with explicit instructions. The pipeline
+# refuses to operate on documents containing `HUMAN_FILL` tokens.
+# =============================================================================
+
+examples:
+
+  # ---------------------------------------------------------------------------
+  # 6.1 ServiceDescriptor — htn-pregnancy-denylist
+  # ---------------------------------------------------------------------------
+  - service_id: htn-pregnancy-denylist
+    title: "Pregnancy denylist for hypertension medications"
+    description: |
+      Hard refusal on order-select for ACE inhibitors, ARBs, MRAs,
+      and direct renin inhibitors in pregnancy. Source: 2025 ACC/AHA
+      HBP Guideline; COR III-Harm.
+    hook: order-select
+    posture: hard-refuse
+    enabled: true
+    bound_libraries:
+      - library_id: "lib-HUMAN_FILL_16HEX"
+        library_name: PregnancyHTN
+        library_content_hash: "HUMAN_FILL_64HEX"
+        gate2_register_path: "work/HUMAN_FILL_RUN_ID/gate2/cohort-HUMAN_FILL_16HEX.signed.jsonld"
+        gate2_register_sha256: "HUMAN_FILL_64HEX"
+        asserts_invariant_kinds: [pregnancy-denylist-order-select-hard-refuse]
+        bound_risk_engine: { name: PREVENT, legacy_only: false }
+        coverage_pct: 99.5
+        coverage_pct_denylist_branch: 99.7
+    prefetch:
+      patient: "Patient/{{context.patientId}}"
+      pregnancy: "Condition?subject=Patient/{{context.patientId}}&code:in=HUMAN_FILL_PREGNANCY_VALUE_SET_ID"
+      medications_in_session: "MedicationRequest?subject=Patient/{{context.patientId}}&status=active,draft"
+    indicator_set: [critical]
+    suggestions_present: false
+    documentation_only: false
+    age_gate_min_inclusive: 18
+    intended_use_population_filter: [pregnant, postpartum]
+    out_of_scope_populations: [pediatric]
+    metadata:
+      build_run_id: "HUMAN_FILL_UUID"
+      build_version_label: "v1.0.0+ACC-AHA-2025+US+HUMAN_FILL_ISO_DATE"
+      manifest_payload_sha256: "HUMAN_FILL_64HEX"
+      gate1_cohort_ids: ["cohort-HUMAN_FILL_16HEX"]
+      gate2_cohort_ids: ["cohort-HUMAN_FILL_16HEX"]
+      two_person_witnesses:
+        - { role: mfm-or-obstetric-medicine, reviewer_id: "rev-HUMAN_FILL_16HEX", gate: gate-1, cohort_id: "cohort-HUMAN_FILL_16HEX" }
+        - { role: clinical-pharmacologist,    reviewer_id: "rev-HUMAN_FILL_16HEX", gate: gate-1, cohort_id: "cohort-HUMAN_FILL_16HEX" }
+        - { role: mfm-or-obstetric-medicine, reviewer_id: "rev-HUMAN_FILL_16HEX", gate: gate-2, cohort_id: "cohort-HUMAN_FILL_16HEX" }
+        - { role: clinical-pharmacologist,    reviewer_id: "rev-HUMAN_FILL_16HEX", gate: gate-2, cohort_id: "cohort-HUMAN_FILL_16HEX" }
+      prov_activity_id: "HUMAN_FILL_PROV_ACT"
+      sair_anchor_record_ids: ["rec-HUMAN_FILL_16HEX"]
+      sair_anchor_atomic_unit_ids: ["au-HUMAN_FILL_16HEX"]
+    state: built
+    superseded_by_descriptor_sha256: null
+    fixity:
+      descriptor_sha256: "HUMAN_FILL_64HEX"
+      computed_at: "HUMAN_FILL_ISO_DATETIME"
+      canonical_form: json-canonical-rfc8785
+
+  # ---------------------------------------------------------------------------
+  # 6.2 ServiceSetManifest covering the closed seven-service set
+  # ---------------------------------------------------------------------------
+  - schema_version: "1.0.0"
+    build_run_id: "HUMAN_FILL_UUID"
+    manifest_version: "1.0.0"
+    predecessor_service_set_sha256: null
+    guideline_manifest_ref: "guideline-manifest-hbp-2025.v1.0.0+ACC-AHA-2025+US+HUMAN_FILL_DATE.yaml"
+
+    services:
+      - { id: htn-bp-stage-and-confirm,       descriptor_path: "work/HUMAN_FILL_RUN_ID/cds-hooks/htn-bp-stage-and-confirm.json",       descriptor_sha256: "HUMAN_FILL_64HEX" }
+      - { id: htn-prevent-risk-and-threshold, descriptor_path: "work/HUMAN_FILL_RUN_ID/cds-hooks/htn-prevent-risk-and-threshold.json", descriptor_sha256: "HUMAN_FILL_64HEX" }
+      - { id: htn-pharm-first-line-check,     descriptor_path: "work/HUMAN_FILL_RUN_ID/cds-hooks/htn-pharm-first-line-check.json",     descriptor_sha256: "HUMAN_FILL_64HEX" }
+      - { id: htn-pregnancy-denylist,         descriptor_path: "work/HUMAN_FILL_RUN_ID/cds-hooks/htn-pregnancy-denylist.json",         descriptor_sha256: "HUMAN_FILL_64HEX" }
+      - { id: htn-resistant-workup,           descriptor_path: "work/HUMAN_FILL_RUN_ID/cds-hooks/htn-resistant-workup.json",           descriptor_sha256: "HUMAN_FILL_64HEX" }
+      - { id: htn-secondary-screen,           descriptor_path: "work/HUMAN_FILL_RUN_ID/cds-hooks/htn-secondary-screen.json",           descriptor_sha256: "HUMAN_FILL_64HEX" }
+      - { id: htn-hbpm-discharge,             descriptor_path: "work/HUMAN_FILL_RUN_ID/cds-hooks/htn-hbpm-discharge.json",             descriptor_sha256: "HUMAN_FILL_64HEX" }
+
+    service_set_sha256: "HUMAN_FILL_64HEX"
+
+    state: built
+
+    audit_log:
+      - { event_id: "evt-HUMAN_FILL_16HEX", occurred_at: "HUMAN_FILL_ISO_DATETIME", kind: service-built,        actor_id: "HUMAN_FILL", payload_sha256: "HUMAN_FILL_64HEX", prov_activity_id: "HUMAN_FILL" }
+      - { event_id: "evt-HUMAN_FILL_16HEX", occurred_at: "HUMAN_FILL_ISO_DATETIME", kind: service-built,        actor_id: "HUMAN_FILL", payload_sha256: "HUMAN_FILL_64HEX", prov_activity_id: "HUMAN_FILL" }
+      - { event_id: "evt-HUMAN_FILL_16HEX", occurred_at: "HUMAN_FILL_ISO_DATETIME", kind: service-built,        actor_id: "HUMAN_FILL", payload_sha256: "HUMAN_FILL_64HEX", prov_activity_id: "HUMAN_FILL" }
+      - { event_id: "evt-HUMAN_FILL_16HEX", occurred_at: "HUMAN_FILL_ISO_DATETIME", kind: service-built,        actor_id: "HUMAN_FILL", payload_sha256: "HUMAN_FILL_64HEX", prov_activity_id: "HUMAN_FILL" }
+      - { event_id: "evt-HUMAN_FILL_16HEX", occurred_at: "HUMAN_FILL_ISO_DATETIME", kind: service-built,        actor_id: "HUMAN_FILL", payload_sha256: "HUMAN_FILL_64HEX", prov_activity_id: "HUMAN_FILL" }
+      - { event_id: "evt-HUMAN_FILL_16HEX", occurred_at: "HUMAN_FILL_ISO_DATETIME", kind: service-built,        actor_id: "HUMAN_FILL", payload_sha256: "HUMAN_FILL_64HEX", prov_activity_id: "HUMAN_FILL" }
+      - { event_id: "evt-HUMAN_FILL_16HEX", occurred_at: "HUMAN_FILL_ISO_DATETIME", kind: service-built,        actor_id: "HUMAN_FILL", payload_sha256: "HUMAN_FILL_64HEX", prov_activity_id: "HUMAN_FILL" }
+      - { event_id: "evt-HUMAN_FILL_16HEX", occurred_at: "HUMAN_FILL_ISO_DATETIME", kind: service-set-built,    actor_id: "HUMAN_FILL", payload_sha256: "HUMAN_FILL_64HEX", prov_activity_id: "HUMAN_FILL" }
+      - { event_id: "evt-HUMAN_FILL_16HEX", occurred_at: "HUMAN_FILL_ISO_DATETIME", kind: service-set-verified, actor_id: "HUMAN_FILL", payload_sha256: "HUMAN_FILL_64HEX", prov_activity_id: "HUMAN_FILL" }
+
+    fixity:
+      manifest_sha256: "HUMAN_FILL_64HEX"
+      computed_at: "HUMAN_FILL_ISO_DATETIME"
+      canonical_form: json-canonical-rfc8785
+
+# =============================================================================
+# 7. CHANGE CONTROL
+# -----------------------------------------------------------------------------
+# Any change to this schema (closed enums, the per-service constraint
+# matrix, the AttendingOverridePattern denylist, the
+# PregnancyDenylistConstraints, validation rules, invariants, or
+# example fixtures) requires:
+#   - A change-controlled diff with regression evaluation against the
+#     golden CDS Hooks service-set.
+#   - Panel-chair signoff AND medical-director acknowledgement (since
+#     this schema directly governs the prescribing-surface wiring of
+#     a safety-critical hard-block).
+#   - Increment of `schema_version` (semver: breaking = major).
+#   - Update of `last_reviewed`.
+#   - Coordinated update of every producing/consuming skill's
+#     tools_lock reference and acceptance-test fixtures.
+#   - Any change to: closed_service_set; closed_hook_type_and_posture;
+#     attending_override_denylist; pregnancy_hard_block;
+#     pce_legacy_never_feeds_cds; age_gate_eq_18;
+#     library_content_hash_binding; descriptor_canonicalization;
+#     service_set_manifest_canonicalization;
+#     two_person_witnesses_recorded; post_package_immutability;
+#     superseded_descriptors; or enabled_unconditionally requires
+#     ALSO an ADR-HTN-001 amendment with documented rationale and a
+#     new medical-director signoff.
+# =============================================================================
+
+change_control:
+  semver: true
+  golden_set_regression_required: true
+  panel_chair_signoff_required: true
+  medical_director_acknowledgement_required: true
+  parent_schemas_to_update_on_breaking_change:
+    - cpg-htn-2025-acc-aha/schemas/recommendation-record-htn.yaml
+    - cpg-htn-2025-acc-aha/schemas/atomic-unit.yaml
+    - cpg-htn-2025-acc-aha/schemas/sair.yaml
+    - cpg-htn-2025-acc-aha/schemas/gate1-register.yaml
+    - cpg-htn-2025-acc-aha/schemas/gate2-register.yaml
+    - cpg-htn-2025-acc-aha/schemas/gate3-attestation.yaml
+    - cpg-htn-2025-acc-aha/schemas/safety-case-htn.yaml
+    - cpg-htn-2025-acc-aha/schemas/guideline-manifest-hbp-2025.yaml
+  parent_skills_to_update_on_breaking_change:
+    - cpg-htn-2025-acc-aha/skills/cds-hooks-package-htn
+    - cpg-htn-2025-acc-aha/skills/safety-hbp
+    - cpg-htn-2025-acc-aha/skills/safety-case-attest
+    - cpg-htn-2025-acc-aha/skills/cql-clinician-signoff
+    - cpg-htn-2025-acc-aha/skills/flow-hbp-2025-build
+    - cpg-htn-2025-acc-aha/skills/fhir-implementation-guide-build
+    - cpg-htn-2025-acc-aha/skills/guideline-version
+  adr_amendment_required_for_policy_changes:
+    closed_service_set: true
+    closed_hook_type_and_posture: true
+    attending_override_denylist: true
+    pregnancy_hard_block: true
+    pce_legacy_never_feeds_cds: true
+    age_gate_eq_18: true
+    library_content_hash_binding: true
+    descriptor_canonicalization: true
+    service_set_manifest_canonicalization: true
+    two_person_witnesses_recorded: true
+    post_package_immutability: true
+    superseded_descriptors: true
+    enabled_unconditionally: true
+    adr_to_amend: ADR-HTN-001 D5, D8, D9, D10, D15

@@ -1,0 +1,161 @@
+# ... (continuation of example 6.2; the file resumes mid-`bundle_manifest.members[]`) ...
+
+        - { id: sair, kind: sair,                    path: "...", canonicalization: jcs-rfc8785-then-sha256,           sha256: "HUMAN_FILL_64HEX", file_list: [], member_count: null }
+
+    bundle_sha256: "HUMAN_FILL_64HEX"
+
+    attesters:
+      - attester_id: "rev-HUMAN_FILL_16HEX"
+        legal_name: "HUMAN_FILL"
+        preferred_credential_string: "HUMAN_FILL"
+        role: medical-director
+        institution: "HUMAN_FILL"
+        identity_proof:
+          ial: IAL3
+          aal: AAL3
+          proofing_method: "HUMAN_FILL"
+          proofing_evidence_uri: "https://HUMAN_FILL/director-proof"
+          proofed_at: "HUMAN_FILL_ISO_DATETIME"
+          proofed_by_org: "HUMAN_FILL"
+          proofed_by_person: null
+        credentials:
+          - kind: medical-director
+            issuer: "HUMAN_FILL"
+            evidence_uri: "https://HUMAN_FILL/director-credential"
+            valid_from: "HUMAN_FILL_ISO_DATE"
+            valid_until: null
+            verified_at: "HUMAN_FILL_ISO_DATETIME"
+            verified_by: "HUMAN_FILL"
+        coi_disclosures:
+          - kind: none
+            counterparty: null
+            scope: none
+            scope_detail: null
+            disclosed_at: "HUMAN_FILL_ISO_DATETIME"
+            mitigation: null
+            auto_disqualifies_build: false
+        public_key:
+          algorithm: Ed25519
+          key_id: "HUMAN_FILL"
+          key_pem: "HUMAN_FILL"
+          fingerprint_sha256: "HUMAN_FILL_64HEX"
+        added_to_attestation_at: "HUMAN_FILL_ISO_DATETIME"
+
+    attestations:
+      - attestation_entry_id: "att-HUMAN_FILL_16HEX"
+        attester_id: "rev-HUMAN_FILL_16HEX"
+        role: medical-director
+        bundle_sha256: "HUMAN_FILL_64HEX"
+        manifest_payload_sha256_at_signoff: "HUMAN_FILL_64HEX"
+        decision: decline
+        acknowledgements: null
+        decline_reason: coverage-below-floor
+        rationale: |
+          HUMAN_FILL: e.g., "Library FirstLineSelection reports 93.7%
+          branch coverage on the pinned Synthea cohort, below the 95.0%
+          floor required at Gate 2. Per `no_relax_of_prior_gates`, this
+          decision MUST decline. The orchestrator is signaled to extend
+          the reference-test pack and re-run cql-test-synthea-htn at P21
+          to produce a new Library snapshot, after which a fresh
+          attestation document with this attestation as predecessor will
+          be opened against the rebuilt bundle."
+        coi_attestation_at_signoff:
+          no_undisclosed_coi: true
+          applicable_coi_kinds: []
+        session_attestations:
+          reviewed_bundle_integrity_pane: true
+          reviewed_gate1_summary_pane: true
+          reviewed_gate2_summary_pane: true
+          reviewed_hazard_log_and_safety_case_pane: true
+          reviewed_phi_pane: true
+          reviewed_copyright_pane: true
+          reviewed_ig_validator_pane: true
+          reviewed_cds_hooks_wiring_pane: true
+          reviewed_supersession_pane: true
+          reviewed_documentation_pane: true
+          reviewed_intended_use_pane: true
+        signed_at: "HUMAN_FILL_ISO_DATETIME"
+        signature:
+          algorithm: Ed25519
+          key_id: "HUMAN_FILL"
+          payload_canonical_form: json-canonical-rfc8785
+          payload_sha256: "HUMAN_FILL_64HEX"
+          signature_b64: "HUMAN_FILL_BASE64"
+          time_stamp:
+            tsa_name: "HUMAN_FILL"
+            tsa_url: "https://HUMAN_FILL/tsa"
+            tsa_cert_fingerprint_sha256: "HUMAN_FILL_64HEX"
+            time: "HUMAN_FILL_ISO_DATETIME"
+            token_b64: "HUMAN_FILL_BASE64"
+          verifies: true
+
+    state: declined
+
+    audit_log:
+      - { event_id: "evt-HUMAN_FILL_16HEX", occurred_at: "HUMAN_FILL_ISO_DATETIME", kind: attestation-drafted, actor_id: "HUMAN_FILL", payload_sha256: "HUMAN_FILL_64HEX", prov_activity_id: "HUMAN_FILL" }
+      - { event_id: "evt-HUMAN_FILL_16HEX", occurred_at: "HUMAN_FILL_ISO_DATETIME", kind: bundle-recomputed,   actor_id: "HUMAN_FILL", payload_sha256: "HUMAN_FILL_64HEX", prov_activity_id: "HUMAN_FILL" }
+      - { event_id: "evt-HUMAN_FILL_16HEX", occurred_at: "HUMAN_FILL_ISO_DATETIME", kind: decline-recorded,    actor_id: "rev-HUMAN_FILL_16HEX", payload_sha256: "HUMAN_FILL_64HEX", prov_activity_id: "HUMAN_FILL" }
+
+    fixity:
+      attestation_sha256: "HUMAN_FILL_64HEX"
+      computed_at: "HUMAN_FILL_ISO_DATETIME"
+      canonical_form: json-canonical-rfc8785
+
+# =============================================================================
+# 7. CHANGE CONTROL
+# -----------------------------------------------------------------------------
+# Any change to this schema (closed enums, policy clauses, validation rules,
+# invariants, or example fixtures) requires:
+#   - A change-controlled diff with regression evaluation against the golden set.
+#   - Panel-chair signoff AND medical-director acknowledgement (since this
+#     schema directly governs the medical director's signature surface).
+#   - Increment of `schema_version` (semver: breaking = major).
+#   - Update of `last_reviewed`.
+#   - Coordinated update of every producing/consuming skill's tools_lock
+#     reference and acceptance-test fixtures.
+#   - Any change to: attester_identity; bundle_completeness;
+#     bundle_integrity_recompute; bundle_member_canonicalization;
+#     decline_without_publish; no_relax_of_prior_gates;
+#     acknowledgement_toggles_required; decline_reason_required;
+#     coi_auto_disqualification; post_attestation_immutability;
+#     signature_algorithm; time_stamping; or publication_signal requires
+#     ALSO an ADR-HTN-001 amendment with documented rationale and a new
+#     medical-director signoff.
+# =============================================================================
+
+change_control:
+  semver: true
+  golden_set_regression_required: true
+  panel_chair_signoff_required: true
+  medical_director_acknowledgement_required: true
+  parent_schemas_to_update_on_breaking_change:
+    - cpg-htn-2025-acc-aha/schemas/recommendation-record-htn.yaml
+    - cpg-htn-2025-acc-aha/schemas/atomic-unit.yaml
+    - cpg-htn-2025-acc-aha/schemas/sair.yaml
+    - cpg-htn-2025-acc-aha/schemas/gate1-register.yaml
+    - cpg-htn-2025-acc-aha/schemas/gate2-register.yaml
+    - cpg-htn-2025-acc-aha/schemas/guideline-manifest-hbp-2025.yaml
+  parent_skills_to_update_on_breaking_change:
+    - cpg-htn-2025-acc-aha/skills/safety-case-attest
+    - cpg-htn-2025-acc-aha/skills/flow-hbp-2025-build
+    - cpg-htn-2025-acc-aha/skills/guideline-version
+    - cpg-htn-2025-acc-aha/skills/safety-hbp
+    - cpg-htn-2025-acc-aha/skills/copyright-quote-check-acc-aha
+    - cpg-htn-2025-acc-aha/skills/phi-scrub
+    - cpg-htn-2025-acc-aha/skills/fhir-implementation-guide-build
+    - cpg-htn-2025-acc-aha/skills/guideline-docs
+  adr_amendment_required_for_policy_changes:
+    attester_identity: true
+    bundle_completeness: true
+    bundle_integrity_recompute: true
+    bundle_member_canonicalization: true
+    decline_without_publish: true
+    no_relax_of_prior_gates: true
+    acknowledgement_toggles_required: true
+    decline_reason_required: true
+    coi_auto_disqualification: true
+    post_attestation_immutability: true
+    signature_algorithm: true
+    time_stamping: true
+    publication_signal: true
+    adr_to_amend: ADR-HTN-001 D5, D8, D9, D10, D11, D13, D14, D15

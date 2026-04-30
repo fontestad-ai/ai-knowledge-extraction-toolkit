@@ -16,6 +16,8 @@ from gaik.software_modules.clinical_guidelines_to_structured_data import (
 from gaik.software_modules.clinical_guidelines_to_structured_data.contracts import (
     build_contract_prompt_context,
     list_clinical_contract_resources,
+    list_missing_pending_chat_backlog_artifacts,
+    list_pending_chat_backlog_artifacts,
 )
 from gaik.software_modules.clinical_guidelines_to_structured_data.pipeline import (
     HYPERTENSION_REQUIREMENTS_MODEL,
@@ -104,6 +106,29 @@ def test_chat_session_contract_resources_are_packaged_and_loadable():
     assert "v1_schemas/recommendation-record-htn.yaml" in paths
     assert "SME" in context or "sme" in context.lower()
     assert "PlanDefinition" in context or "recommendation" in context.lower()
+
+
+def test_late_chat_backlog_artifacts_are_fully_materialized():
+    pending_paths = set(list_pending_chat_backlog_artifacts())
+    resource_map = {
+        resource.relative_path: resource for resource in list_clinical_contract_resources()
+    }
+
+    assert len(pending_paths) == 51
+    assert list_missing_pending_chat_backlog_artifacts() == ()
+    for path in pending_paths:
+        assert path in resource_map
+        assert len(resource_map[path].text.strip()) > 500
+
+
+def test_expanded_contract_prompt_context_includes_governance_and_test_artifacts():
+    context = build_contract_prompt_context(max_chars=40_000)
+
+    assert "ADR-HTN-001" in context
+    assert "FHIR R5 JSON Canonicalization" in context
+    assert "LLM Family Matrix" in context
+    assert "terminology" in context.lower()
+    assert "Synthea" in context
 
 
 def test_lmcli_missing_without_fallback_raises():

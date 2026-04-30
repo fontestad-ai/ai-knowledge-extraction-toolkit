@@ -1,0 +1,277 @@
+# ... (continuation of example 6.2; the file resumes mid-LibraryEntry list) ...
+
+    libraries:
+      # Two accepted Libraries with cell-consensus, two-reviewer pairs, and
+      # verified hard-block invariants. The compact-flow notation is used to
+      # keep the fixture tractable; the canonical, full-form rendering is
+      # identical to the accepted Library in example 6.1.
+      - library_id: "lib-HUMAN_FILL_16HEX"
+        library_name: HBPStaging
+        library_version: "1.0.0"
+        library_content_hash: "HUMAN_FILL_64HEX"
+        snapshot:
+          library_id: "lib-HUMAN_FILL_16HEX"
+          library_name: HBPStaging
+          library_version: "1.0.0"
+          snapshot_dir: "work/HUMAN_FILL_RUN_ID/cql/lib-HUMAN_FILL_16HEX/"
+          cql_files:
+            - { path: "HBPStaging.cql", sha256: "HUMAN_FILL_64HEX" }
+          elm_files:
+            - { path: "HBPStaging.json", sha256: "HUMAN_FILL_64HEX" }
+          typecheck_report_path: "typecheck.json"
+          typecheck_report_sha256: "HUMAN_FILL_64HEX"
+          coverage_report_path: "coverage.json"
+          coverage_report_sha256: "HUMAN_FILL_64HEX"
+          reference_tests_path: "reference-tests.json"
+          reference_tests_sha256: "HUMAN_FILL_64HEX"
+          bound_recommendation_record_ids: ["rec-HUMAN_FILL_16HEX"]
+          bound_atomic_unit_ids: ["au-HUMAN_FILL_16HEX"]
+          bound_value_set_ids: ["HUMAN_FILL_VS"]
+          bound_code_system_ids: ["HUMAN_FILL_CS"]
+          bound_risk_engine: null
+          cds_hooks_service_ids_wired: ["htn-bp-stage-and-confirm"]
+        typecheck_summary:
+          runtime_pin: "HUMAN_FILL_PIN"
+          errors_count: 0
+          warnings_count: 0
+          warnings_promoted_to_errors_count: 0
+          status: clean
+          report_sha256: "HUMAN_FILL_64HEX"
+        coverage_summary:
+          runtime_pin: "HUMAN_FILL_PIN"
+          synthea_cohort_run_id: "HUMAN_FILL_UUID"
+          synthea_seed: "HUMAN_FILL_SEED"
+          branch_coverage_pct: 96.5
+          branches_total: 0          # HUMAN_FILL
+          branches_covered: 0        # HUMAN_FILL
+          report_sha256: "HUMAN_FILL_64HEX"
+          status: floor-met
+        hard_block_invariants:
+          - kind: bp-confirmation-out-of-office
+            statement: "HUMAN_FILL: source-anchored statement"
+            verifying_test_id: "HUMAN_FILL_TEST_ID"
+            verified: true
+            basis: explicit-should-not-anchor
+        reference_test_results:
+          - { test_id: "HUMAN_FILL_TEST_ID", status: pass, asserts_invariant_kind: bp-confirmation-out-of-office, duration_ms: 12, report_uri: null }
+        state: accepted
+        signoffs:
+          - signoff_id: "so-HUMAN_FILL_16HEX"
+            reviewer_id: "rev-HUMAN_FILL_16HEX"
+            role: hypertension-specialist
+            library_id: "lib-HUMAN_FILL_16HEX"
+            library_content_hash: "HUMAN_FILL_64HEX"
+            manifest_payload_sha256_at_signoff: "HUMAN_FILL_64HEX"
+            gate1_register_refs:
+              - { register_path: "work/HUMAN_FILL_RUN_ID/gate1/cohort-HUMAN_FILL_16HEX.signed.jsonld", register_sha256: "HUMAN_FILL_64HEX" }
+            decision: accept
+            rationale: "HUMAN_FILL"
+            comment: null
+            concern_category: null
+            coi_attestation_at_signoff: { no_undisclosed_coi: true, applicable_coi_kinds: [] }
+            session_attestations:
+              reviewed_cql_source: true
+              reviewed_typecheck_report: true
+              reviewed_coverage_report: true
+              reviewed_reference_tests: true
+              reviewed_hard_block_invariants: true
+              reviewed_cds_hooks_wiring_preview: true
+              reviewed_provenance_inputs: true
+            signed_at: "HUMAN_FILL_ISO_DATETIME"
+            signature:
+              algorithm: Ed25519
+              key_id: "HUMAN_FILL"
+              payload_canonical_form: json-canonical-rfc8785
+              payload_sha256: "HUMAN_FILL_64HEX"
+              signature_b64: "HUMAN_FILL_BASE64"
+              time_stamp:
+                tsa_name: "HUMAN_FILL"
+                tsa_url: "https://HUMAN_FILL/tsa"
+                tsa_cert_fingerprint_sha256: "HUMAN_FILL_64HEX"
+                time: "HUMAN_FILL_ISO_DATETIME"
+                token_b64: "HUMAN_FILL_BASE64"
+              verifies: true
+          - signoff_id: "so-HUMAN_FILL_16HEX"
+            reviewer_id: "rev-HUMAN_FILL_16HEX"
+            role: clinical-informaticist
+            library_id: "lib-HUMAN_FILL_16HEX"
+            library_content_hash: "HUMAN_FILL_64HEX"
+            manifest_payload_sha256_at_signoff: "HUMAN_FILL_64HEX"
+            gate1_register_refs:
+              - { register_path: "work/HUMAN_FILL_RUN_ID/gate1/cohort-HUMAN_FILL_16HEX.signed.jsonld", register_sha256: "HUMAN_FILL_64HEX" }
+            decision: accept
+            rationale: "HUMAN_FILL"
+            comment: null
+            concern_category: null
+            coi_attestation_at_signoff: { no_undisclosed_coi: true, applicable_coi_kinds: [] }
+            session_attestations:
+              reviewed_cql_source: true
+              reviewed_typecheck_report: true
+              reviewed_coverage_report: true
+              reviewed_reference_tests: true
+              reviewed_hard_block_invariants: true
+              reviewed_cds_hooks_wiring_preview: true
+              reviewed_provenance_inputs: true
+            signed_at: "HUMAN_FILL_ISO_DATETIME"
+            signature:
+              algorithm: Ed25519
+              key_id: "HUMAN_FILL"
+              payload_canonical_form: json-canonical-rfc8785
+              payload_sha256: "HUMAN_FILL_64HEX"
+              signature_b64: "HUMAN_FILL_BASE64"
+              time_stamp:
+                tsa_name: "HUMAN_FILL"
+                tsa_url: "https://HUMAN_FILL/tsa"
+                tsa_cert_fingerprint_sha256: "HUMAN_FILL_64HEX"
+                time: "HUMAN_FILL_ISO_DATETIME"
+                token_b64: "HUMAN_FILL_BASE64"
+              verifies: true
+        escalation: null
+        rework_history: []
+
+      - library_id: "lib-HUMAN_FILL_16HEX"
+        library_name: PreventRisk
+        library_version: "1.0.0"
+        library_content_hash: "HUMAN_FILL_64HEX"
+        snapshot:
+          library_id: "lib-HUMAN_FILL_16HEX"
+          library_name: PreventRisk
+          library_version: "1.0.0"
+          snapshot_dir: "work/HUMAN_FILL_RUN_ID/cql/lib-HUMAN_FILL_16HEX/"
+          cql_files: [ { path: "PreventRisk.cql", sha256: "HUMAN_FILL_64HEX" } ]
+          elm_files: [ { path: "PreventRisk.json", sha256: "HUMAN_FILL_64HEX" } ]
+          typecheck_report_path: "typecheck.json"
+          typecheck_report_sha256: "HUMAN_FILL_64HEX"
+          coverage_report_path: "coverage.json"
+          coverage_report_sha256: "HUMAN_FILL_64HEX"
+          reference_tests_path: "reference-tests.json"
+          reference_tests_sha256: "HUMAN_FILL_64HEX"
+          bound_recommendation_record_ids: ["rec-HUMAN_FILL_16HEX"]
+          bound_atomic_unit_ids: ["au-HUMAN_FILL_16HEX"]
+          bound_value_set_ids: []
+          bound_code_system_ids: []
+          bound_risk_engine: { name: PREVENT, legacy_only: false }
+          cds_hooks_service_ids_wired: ["htn-prevent-risk-and-threshold"]
+        typecheck_summary:
+          runtime_pin: "HUMAN_FILL_PIN"
+          errors_count: 0
+          warnings_count: 0
+          warnings_promoted_to_errors_count: 0
+          status: clean
+          report_sha256: "HUMAN_FILL_64HEX"
+        coverage_summary:
+          runtime_pin: "HUMAN_FILL_PIN"
+          synthea_cohort_run_id: "HUMAN_FILL_UUID"
+          synthea_seed: "HUMAN_FILL_SEED"
+          branch_coverage_pct: 95.8
+          branches_total: 0
+          branches_covered: 0
+          report_sha256: "HUMAN_FILL_64HEX"
+          status: floor-met
+        hard_block_invariants:
+          - { kind: prevent-canonical-binding, statement: "PREVENT is the canonical risk function; PCE-legacy never feeds CQL.", verifying_test_id: "HUMAN_FILL_TEST_ID", verified: true, basis: manifest-pin-prevent }
+          - { kind: pce-legacy-never-feeds-cql, statement: "Library MUST NOT consume PCE-legacy bindings.", verifying_test_id: "HUMAN_FILL_TEST_ID", verified: true, basis: manifest-pin-prevent }
+        reference_test_results:
+          - { test_id: "HUMAN_FILL_TEST_ID", status: pass, asserts_invariant_kind: prevent-canonical-binding, duration_ms: 9, report_uri: null }
+          - { test_id: "HUMAN_FILL_TEST_ID", status: pass, asserts_invariant_kind: pce-legacy-never-feeds-cql, duration_ms: 5, report_uri: null }
+        state: accepted
+        signoffs:
+          - { signoff_id: "so-HUMAN_FILL_16HEX", reviewer_id: "rev-HUMAN_FILL_16HEX", role: hypertension-specialist, library_id: "lib-HUMAN_FILL_16HEX", library_content_hash: "HUMAN_FILL_64HEX", manifest_payload_sha256_at_signoff: "HUMAN_FILL_64HEX", gate1_register_refs: [ { register_path: "work/HUMAN_FILL_RUN_ID/gate1/cohort-HUMAN_FILL_16HEX.signed.jsonld", register_sha256: "HUMAN_FILL_64HEX" } ], decision: accept, rationale: "HUMAN_FILL", comment: null, concern_category: null, coi_attestation_at_signoff: { no_undisclosed_coi: true, applicable_coi_kinds: [] }, session_attestations: { reviewed_cql_source: true, reviewed_typecheck_report: true, reviewed_coverage_report: true, reviewed_reference_tests: true, reviewed_hard_block_invariants: true, reviewed_cds_hooks_wiring_preview: true, reviewed_provenance_inputs: true }, signed_at: "HUMAN_FILL_ISO_DATETIME", signature: { algorithm: Ed25519, key_id: "HUMAN_FILL", payload_canonical_form: json-canonical-rfc8785, payload_sha256: "HUMAN_FILL_64HEX", signature_b64: "HUMAN_FILL_BASE64", time_stamp: { tsa_name: "HUMAN_FILL", tsa_url: "https://HUMAN_FILL/tsa", tsa_cert_fingerprint_sha256: "HUMAN_FILL_64HEX", time: "HUMAN_FILL_ISO_DATETIME", token_b64: "HUMAN_FILL_BASE64" }, verifies: true } }
+          - { signoff_id: "so-HUMAN_FILL_16HEX", reviewer_id: "rev-HUMAN_FILL_16HEX", role: clinical-informaticist, library_id: "lib-HUMAN_FILL_16HEX", library_content_hash: "HUMAN_FILL_64HEX", manifest_payload_sha256_at_signoff: "HUMAN_FILL_64HEX", gate1_register_refs: [ { register_path: "work/HUMAN_FILL_RUN_ID/gate1/cohort-HUMAN_FILL_16HEX.signed.jsonld", register_sha256: "HUMAN_FILL_64HEX" } ], decision: accept, rationale: "HUMAN_FILL", comment: null, concern_category: null, coi_attestation_at_signoff: { no_undisclosed_coi: true, applicable_coi_kinds: [] }, session_attestations: { reviewed_cql_source: true, reviewed_typecheck_report: true, reviewed_coverage_report: true, reviewed_reference_tests: true, reviewed_hard_block_invariants: true, reviewed_cds_hooks_wiring_preview: true, reviewed_provenance_inputs: true }, signed_at: "HUMAN_FILL_ISO_DATETIME", signature: { algorithm: Ed25519, key_id: "HUMAN_FILL", payload_canonical_form: json-canonical-rfc8785, payload_sha256: "HUMAN_FILL_64HEX", signature_b64: "HUMAN_FILL_BASE64", time_stamp: { tsa_name: "HUMAN_FILL", tsa_url: "https://HUMAN_FILL/tsa", tsa_cert_fingerprint_sha256: "HUMAN_FILL_64HEX", time: "HUMAN_FILL_ISO_DATETIME", token_b64: "HUMAN_FILL_BASE64" }, verifies: true } }
+        escalation: null
+        rework_history: []
+
+    cohort_axis_signoff:
+      reviewer_id: "rev-HUMAN_FILL_16HEX"
+      role: clinical-informaticist
+      cohort_axis_payload_sha256: "HUMAN_FILL_64HEX"
+      attestations:
+        provenance_integrity_attested: true
+        terminology_pin_consistency_attested: true
+        ig_version_alignment_attested: true
+        cds_hooks_wiring_readiness_attested: true
+      coi_attestation_at_signoff:
+        no_undisclosed_coi: true
+      signed_at: "HUMAN_FILL_ISO_DATETIME"
+      signature:
+        algorithm: Ed25519
+        key_id: "HUMAN_FILL"
+        payload_canonical_form: json-canonical-rfc8785
+        payload_sha256: "HUMAN_FILL_64HEX"
+        signature_b64: "HUMAN_FILL_BASE64"
+        time_stamp:
+          tsa_name: "HUMAN_FILL"
+          tsa_url: "https://HUMAN_FILL/tsa"
+          tsa_cert_fingerprint_sha256: "HUMAN_FILL_64HEX"
+          time: "HUMAN_FILL_ISO_DATETIME"
+          token_b64: "HUMAN_FILL_BASE64"
+        verifies: true
+
+    audit_log:
+      - { event_id: "evt-HUMAN_FILL_16HEX", occurred_at: "HUMAN_FILL_ISO_DATETIME", kind: cohort-created,        actor_id: "HUMAN_FILL", payload_sha256: "HUMAN_FILL_64HEX", prov_activity_id: "HUMAN_FILL" }
+      - { event_id: "evt-HUMAN_FILL_16HEX", occurred_at: "HUMAN_FILL_ISO_DATETIME", kind: signoff-recorded,       actor_id: "rev-HUMAN_FILL_16HEX", payload_sha256: "HUMAN_FILL_64HEX", prov_activity_id: "HUMAN_FILL" }
+      - { event_id: "evt-HUMAN_FILL_16HEX", occurred_at: "HUMAN_FILL_ISO_DATETIME", kind: signoff-recorded,       actor_id: "rev-HUMAN_FILL_16HEX", payload_sha256: "HUMAN_FILL_64HEX", prov_activity_id: "HUMAN_FILL" }
+      - { event_id: "evt-HUMAN_FILL_16HEX", occurred_at: "HUMAN_FILL_ISO_DATETIME", kind: signoff-recorded,       actor_id: "rev-HUMAN_FILL_16HEX", payload_sha256: "HUMAN_FILL_64HEX", prov_activity_id: "HUMAN_FILL" }
+      - { event_id: "evt-HUMAN_FILL_16HEX", occurred_at: "HUMAN_FILL_ISO_DATETIME", kind: signoff-recorded,       actor_id: "rev-HUMAN_FILL_16HEX", payload_sha256: "HUMAN_FILL_64HEX", prov_activity_id: "HUMAN_FILL" }
+      - { event_id: "evt-HUMAN_FILL_16HEX", occurred_at: "HUMAN_FILL_ISO_DATETIME", kind: cohort-axis-signed,     actor_id: "rev-HUMAN_FILL_16HEX", payload_sha256: "HUMAN_FILL_64HEX", prov_activity_id: "HUMAN_FILL" }
+      - { event_id: "evt-HUMAN_FILL_16HEX", occurred_at: "HUMAN_FILL_ISO_DATETIME", kind: panel-chair-signed,     actor_id: "rev-HUMAN_FILL_16HEX", payload_sha256: "HUMAN_FILL_64HEX", prov_activity_id: "HUMAN_FILL" }
+      - { event_id: "evt-HUMAN_FILL_16HEX", occurred_at: "HUMAN_FILL_ISO_DATETIME", kind: cohort-finalized,       actor_id: "HUMAN_FILL", payload_sha256: "HUMAN_FILL_64HEX", prov_activity_id: "HUMAN_FILL" }
+
+    fixity:
+      register_sha256: "HUMAN_FILL_64HEX"
+      computed_at: "HUMAN_FILL_ISO_DATETIME"
+      canonical_form: json-canonical-rfc8785
+
+# =============================================================================
+# 7. CHANGE CONTROL
+# -----------------------------------------------------------------------------
+# Any change to this schema (closed enums, policy clauses, validation rules,
+# invariants, or example fixtures) requires:
+#   - A change-controlled diff with regression evaluation against the golden set.
+#   - Panel-chair signoff.
+#   - Increment of `schema_version` (semver: breaking = major).
+#   - Update of `last_reviewed`.
+#   - Coordinated update of every producing/consuming skill's `tools_lock`
+#     reference and acceptance test fixtures.
+#   - Any change to: composition_matrix; no_batch_acceptance; no_edit_at_gate2;
+#     no_relax_of_hard_block; coverage_floor; typecheck_clean;
+#     hard_block_verification; cor_loe_immutable_at_gate2;
+#     post_signoff_immutability; conflict_of_interest; identity_proofing;
+#     signature_algorithm; or time_stamping requires ALSO an ADR-HTN-001
+#     amendment with documented rationale and a new panel-chair signoff.
+# =============================================================================
+
+change_control:
+  semver: true
+  golden_set_regression_required: true
+  panel_chair_signoff_required: true
+  parent_schemas_to_update_on_breaking_change:
+    - cpg-htn-2025-acc-aha/schemas/recommendation-record-htn.yaml
+    - cpg-htn-2025-acc-aha/schemas/atomic-unit.yaml
+    - cpg-htn-2025-acc-aha/schemas/sair.yaml
+    - cpg-htn-2025-acc-aha/schemas/gate1-register.yaml
+    - cpg-htn-2025-acc-aha/schemas/gate3-attestation.yaml
+    - cpg-htn-2025-acc-aha/schemas/guideline-manifest-hbp-2025.yaml
+  parent_skills_to_update_on_breaking_change:
+    - cpg-htn-2025-acc-aha/skills/emit-cql-htn
+    - cpg-htn-2025-acc-aha/skills/cql-test-synthea-htn
+    - cpg-htn-2025-acc-aha/skills/cql-clinician-signoff
+    - cpg-htn-2025-acc-aha/skills/cds-hooks-package-htn
+    - cpg-htn-2025-acc-aha/skills/safety-hbp
+    - cpg-htn-2025-acc-aha/skills/safety-case-attest
+    - cpg-htn-2025-acc-aha/skills/flow-hbp-2025-build
+  adr_amendment_required_for_policy_changes:
+    composition_matrix: true
+    no_batch_acceptance: true
+    no_edit_at_gate2: true
+    no_relax_of_hard_block: true
+    coverage_floor: true
+    typecheck_clean: true
+    hard_block_verification: true
+    cor_loe_immutable_at_gate2: true
+    post_signoff_immutability: true
+    conflict_of_interest: true
+    identity_proofing: true
+    signature_algorithm: true
+    time_stamping: true
+    adr_to_amend: ADR-HTN-001 D5, D8, D9

@@ -1,0 +1,120 @@
+$schema: https://json-schema.org/draft/2020-12/schema
+$id: https://fontestad.ai/clinical-guideline-complete/schemas/source-acquisition.yaml
+title: SourceAcquisition
+description: Source acquisition manifest with license, publisher, URL/DOI, and fixity pins.
+type: object
+additionalProperties: false
+required:
+  - artifact_id
+  - artifact_kind
+  - schema_version
+  - run_id
+  - source_trace
+  - state
+  - records
+  - validation
+  - provenance
+properties:
+  artifact_id:
+    type: string
+    pattern: '^[a-z0-9][a-z0-9_.:-]{2,160}$'
+  artifact_kind:
+    type: string
+    const: source-acquisition
+  schema_version:
+    type: string
+    pattern: '^v[0-9]+\.[0-9]+\.[0-9]+$'
+    default: v1.0.0
+  run_id:
+    type: string
+    minLength: 8
+  source_trace:
+    type: object
+    additionalProperties: false
+    required: [source_document_id, source_sha256, citation_anchors]
+    properties:
+      source_document_id: {type: string}
+      source_sha256: {type: string, pattern: '^[a-f0-9]{64}$'}
+      citation_anchors:
+        type: array
+        minItems: 1
+        items:
+          type: object
+          additionalProperties: false
+          required: [page, quote]
+          properties:
+            page: {type: [integer, 'null'], minimum: 1}
+            section: {type: [string, 'null']}
+            quote: {type: string, minLength: 1}
+            bbox: {type: [array, 'null'], minItems: 4, maxItems: 4, items: {type: number}}
+  state:
+    type: string
+    enum: [draft, pending, pass, held, blocked, superseded, withdrawn]
+  records:
+    type: array
+    items:
+      type: object
+      additionalProperties: true
+      required: [record_id, clinical_intent, source_quote, traceability_status]
+      properties:
+        record_id: {type: string}
+        clinical_intent: {type: string}
+        source_quote: {type: string, minLength: 1}
+        traceability_status: {type: string, enum: [grounded, needs-review, blocked]}
+        terminology_bindings:
+          type: array
+          items:
+            type: object
+            required: [system, code, display, version]
+            additionalProperties: false
+            properties:
+              system: {type: string}
+              code: {type: string}
+              display: {type: string}
+              version: {type: string}
+              binding_strength: {type: string, enum: [required, extensible, preferred, example]}
+        safety_flags:
+          type: array
+          items: {type: string}
+  validation:
+    type: object
+    additionalProperties: false
+    required: [status, checks, blockers]
+    properties:
+      status: {type: string, enum: [pass, fail, not-run]}
+      checks:
+        type: array
+        items:
+          type: object
+          required: [check_id, result]
+          additionalProperties: false
+          properties:
+            check_id: {type: string}
+            result: {type: string, enum: [pass, fail, warn, not-run]}
+            message: {type: [string, 'null']}
+      blockers:
+        type: array
+        items: {type: string}
+  provenance:
+    type: object
+    additionalProperties: false
+    required: [created_at, created_by, input_hashes, output_sha256]
+    properties:
+      created_at: {type: string, format: date-time}
+      created_by: {type: string}
+      input_hashes:
+        type: array
+        items: {type: string, pattern: '^[a-f0-9]{64}$'}
+      output_sha256: {type: string, pattern: '^[a-f0-9]{64}$'}
+      tsa_token: {type: [string, 'null']}
+      fhir_provenance_ref: {type: [string, 'null']}
+allOf:
+  - if:
+      properties:
+        state: {const: pass}
+    then:
+      properties:
+        validation:
+          properties:
+            blockers:
+              maxItems: 0

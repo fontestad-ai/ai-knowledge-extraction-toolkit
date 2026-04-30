@@ -1,0 +1,772 @@
+# =============================================================================
+# acc-aha-grading.yaml
+# -----------------------------------------------------------------------------
+# Standalone closed-enum source of truth for ACC/AHA grading vocabulary used
+# throughout the cpg-htn-2025-acc-aha framework.
+#
+# This file is the single point of change for any future ACC/AHA grading
+# update. Every consumer schema and skill MUST resolve COR and LOE values
+# against this file via $ref (no inlined enums, no parallel copies).
+#
+# Posture: caution over velocity, fidelity over coverage, verbatim over
+# paraphrase. Values are the EXACT VERBATIM LABELS as they appear in source
+# recommendation boxes after Unicode NFC normalization and whitespace
+# collapse. Auto-correction is forbidden. Common deviations (case folds,
+# numeric variants, brand-style truncations) are catalogued explicitly as
+# `enum-violation` patterns so that the parse and extract skills can route
+# them to the reconciliation queue rather than silently coerce them.
+#
+# This file does NOT define semantic interpretation of COR or LOE. It defines
+# only the closed lexicon and validation rules. Clinical interpretation lives
+# with the SME panel and the source guideline document; the pipeline's job is
+# to preserve the source's grading verbatim, never to re-grade or re-classify.
+#
+# Authority:
+#   - ADR-HTN-001 D3 (native ACC/AHA grading preserved as primary; GRADE only
+#     as advisory sibling annotation)
+#   - ADR-HTN-001 D10 (three non-overridable human gates; Gate 1 enforces
+#     verbatim COR/LOE preservation)
+#   - ADR-HTN-001 D15 (drift detection on every build)
+#   - Parse + Extraction Phase Spec §3.3 Task 2.3.4 (recommendation-box schema
+#     detection and enum strictness)
+#   - Parse + Extraction Phase Spec §4.1 (extractor A, V, O triple-modal
+#     consensus over COR/LOE cells)
+#   - Parent framework rules: `god-session`, `human-authorization`
+#
+# Relationship to neighboring schemas (separate files, referenced by $ref):
+#   - schemas/sair.yaml
+#   - schemas/recommendation-record-htn.yaml
+#   - schemas/guideline-manifest-hbp-2025.yaml
+#
+# Source authority for the lexicon itself (the only places where these
+# values are defined verbatim):
+#   - 2025 ACC/AHA HBP Guideline — recommendation-box format and grading
+#     definitions section
+#   - "ACC/AHA Class of Recommendation and Level of Evidence" reference
+#     framework as published in the 2015 update and reaffirmed in the 2025
+#     guideline; values pinned in §3 below.
+# =============================================================================
+
+$schema: "https://json-schema.org/draft/2020-12/schema"
+$id: "https://aiwg.io/cpg-htn-2025-acc-aha/schemas/acc-aha-grading.yaml"
+title: "AccAhaGrading"
+description: >
+  Closed-enum lexicon for ACC/AHA Class of Recommendation (COR) and Level of
+  Evidence (LOE), plus validation rules and the catalogued list of common
+  deviations that MUST be escalated as enum violations rather than coerced.
+version: "1.0.0"
+schema_lifecycle: stable
+last_reviewed: "HUMAN_FILL: ISO-8601 date of most recent panel review of this file"
+authority:
+  adr: ADR-HTN-001
+  framework: cpg-htn-2025-acc-aha
+  parent_framework: aiwg-training
+license: MIT
+
+# -----------------------------------------------------------------------------
+# 1. PIN — VERSION OF THE GRADING FRAMEWORK
+# -----------------------------------------------------------------------------
+# This file pins the grading framework against which the 2025 HBP Guideline
+# is to be parsed. Future ACC/AHA updates that revise the COR/LOE lexicon
+# MUST be addressed by a new file (semver: breaking = major), not by mutating
+# this one in place.
+# -----------------------------------------------------------------------------
+
+pin:
+  framework_name: "ACC/AHA Class of Recommendation and Level of Evidence"
+  framework_version_label: "2015-update-as-reaffirmed-in-2025-HBP-guideline"
+  source_pdf_sha256: "HUMAN_FILL_64HEX"        # SHA-256 of the conditioned 2025 HBP Guideline PDF
+  source_pdf_doi:    "HUMAN_FILL_DOI"          # DOI of the 2025 HBP Guideline
+  source_section:    "HUMAN_FILL: section heading where the COR/LOE definitions appear in the 2025 HBP Guideline"
+  source_page:       0                          # HUMAN_FILL: integer page in the source PDF where definitions appear
+  source_bbox:       [0.0, 0.0, 0.0, 0.0]       # HUMAN_FILL: bbox of the COR/LOE definition table
+
+# -----------------------------------------------------------------------------
+# 2. CANONICALIZATION RULES (applied before enum membership check)
+# -----------------------------------------------------------------------------
+# Every consumer of this file MUST apply these rules in this exact order
+# before testing membership. The rules are reversible-or-recorded only; they
+# do not mutate the source bytes — the original glyph stream remains in the
+# SAIR `normalization_log`.
+# -----------------------------------------------------------------------------
+
+canonicalization:
+  ordered_rules:
+    - id: CR-01
+      kind: unicode-normalize
+      form: NFC
+      description: Apply Unicode NFC normalization.
+    - id: CR-02
+      kind: trim
+      where: leading-and-trailing
+      description: Trim leading and trailing ASCII whitespace and Unicode whitespace (U+00A0, U+2000-U+200B, U+2028, U+2029, U+202F, U+205F, U+3000).
+    - id: CR-03
+      kind: collapse-internal-whitespace
+      target: " "
+      description: Collapse runs of internal whitespace (any of the characters listed in CR-02) to a single ASCII space (U+0020).
+    - id: CR-04
+      kind: normalize-non-breaking-space
+      target: " "
+      description: Replace non-breaking space (U+00A0) with ASCII space.
+    - id: CR-05
+      kind: normalize-colon-variants
+      mapping:
+        "\uFE55": ":"   # SMALL COLON
+        "\uFF1A": ":"   # FULLWIDTH COLON
+        "\u02D0": ":"   # MODIFIER LETTER TRIANGULAR COLON (defensive)
+      description: Normalize fullwidth and presentation-form colons to ASCII colon, and only those listed.
+    - id: CR-06
+      kind: normalize-hyphen-and-dash
+      mapping:
+        "\u2010": "-"   # HYPHEN
+        "\u2011": "-"   # NON-BREAKING HYPHEN
+        "\u2012": "-"   # FIGURE DASH
+        "\u2013": "-"   # EN DASH
+        "\u2014": "-"   # EM DASH
+        "\u2212": "-"   # MINUS SIGN
+      description: >
+        Normalize hyphen/dash glyph variants to ASCII HYPHEN-MINUS for the
+        purpose of enum membership ONLY. The original glyph remains in source
+        bytes; this normalization is recorded as a reversible transform in
+        the SAIR's normalization_log.
+    - id: CR-07
+      kind: case-preservation
+      description: >
+        Case is PRESERVED. ACC/AHA labels are case-sensitive (e.g., "I" vs "i",
+        "B-R" vs "b-r"). Casefold operations are forbidden in canonicalization
+        for enum membership.
+
+# -----------------------------------------------------------------------------
+# 3. CLOSED ENUMERATIONS (the only legal verbatim values)
+# -----------------------------------------------------------------------------
+
+$defs:
+
+  # ---------------------------------------------------------------------------
+  # 3.1 Class of Recommendation (COR)
+  # ---------------------------------------------------------------------------
+  AccAhaCOR:
+    type: string
+    enum:
+      - "I"
+      - "IIa"
+      - "IIb"
+      - "III: No Benefit"
+      - "III: Harm"
+    description: >
+      ACC/AHA Class of Recommendation. The five members of this enum are the
+      ONLY legal canonicalized values. Producers (parse skills) MUST emit one
+      of these strings exactly; consumers (extract / structure / CQL) MUST
+      reject any other value as an enum violation. There is no "Class III"
+      without a colon-separated qualifier (`No Benefit` or `Harm`). There is
+      no lowercase or numeric variant (`iia`, `2a`, `Class IIa`). Auto-correction
+      is forbidden under all circumstances.
+    members:
+      - value: "I"
+        description: Strong recommendation (benefit >>> risk).
+        printed_label_examples:
+          - "Class I"
+          - "I"
+        verbatim_examples_for_validators:
+          - "I"
+      - value: "IIa"
+        description: Moderate recommendation (benefit >> risk).
+        printed_label_examples:
+          - "Class IIa"
+          - "IIa"
+        verbatim_examples_for_validators:
+          - "IIa"
+      - value: "IIb"
+        description: Weak recommendation (benefit ≥ risk).
+        printed_label_examples:
+          - "Class IIb"
+          - "IIb"
+        verbatim_examples_for_validators:
+          - "IIb"
+      - value: "III: No Benefit"
+        description: Recommendation against (no benefit demonstrated).
+        printed_label_examples:
+          - "Class III: No Benefit"
+          - "III: No Benefit"
+        verbatim_examples_for_validators:
+          - "III: No Benefit"
+      - value: "III: Harm"
+        description: Strong recommendation against (harm demonstrated).
+        printed_label_examples:
+          - "Class III: Harm"
+          - "III: Harm"
+        verbatim_examples_for_validators:
+          - "III: Harm"
+
+  # ---------------------------------------------------------------------------
+  # 3.2 Level of Evidence (LOE)
+  # ---------------------------------------------------------------------------
+  AccAhaLOE:
+    type: string
+    enum:
+      - "A"
+      - "B-R"
+      - "B-NR"
+      - "C-LD"
+      - "C-EO"
+    description: >
+      ACC/AHA Level of Evidence. The five members of this enum are the ONLY
+      legal canonicalized values. Producers MUST emit one of these strings
+      exactly; consumers MUST reject any other value as an enum violation.
+    members:
+      - value: "A"
+        description: High-quality evidence from more than one RCT or meta-analyses of high-quality RCTs.
+        printed_label_examples:
+          - "Level A"
+          - "A"
+        verbatim_examples_for_validators:
+          - "A"
+      - value: "B-R"
+        description: Moderate-quality evidence from RCTs (Randomized).
+        printed_label_examples:
+          - "Level B-R"
+          - "B-R"
+        verbatim_examples_for_validators:
+          - "B-R"
+      - value: "B-NR"
+        description: Moderate-quality evidence from non-randomized studies.
+        printed_label_examples:
+          - "Level B-NR"
+          - "B-NR"
+        verbatim_examples_for_validators:
+          - "B-NR"
+      - value: "C-LD"
+        description: Limited-data evidence (small studies, registry data, observational with significant limitations).
+        printed_label_examples:
+          - "Level C-LD"
+          - "C-LD"
+        verbatim_examples_for_validators:
+          - "C-LD"
+      - value: "C-EO"
+        description: Expert-opinion evidence (consensus of expert opinion based on clinical experience).
+        printed_label_examples:
+          - "Level C-EO"
+          - "C-EO"
+        verbatim_examples_for_validators:
+          - "C-EO"
+
+  # ---------------------------------------------------------------------------
+  # 3.3 Header-cell labels (used by parse-acc-aha-recbox to detect recommendation boxes)
+  # ---------------------------------------------------------------------------
+  RecBoxHeaderLabel:
+    type: string
+    enum:
+      - "COR"
+      - "LOE"
+      - "Class of Recommendation"
+      - "Level of Evidence"
+      - "Recommendations"
+      - "Recommendation"
+    description: >
+      The legal header-cell tokens for an ACC/AHA recommendation box. A row of
+      headers must contain at least one COR-equivalent and one LOE-equivalent
+      label, plus a `Recommendations` (or `Recommendation`) column.
+      Match is case-insensitive ONLY for header-cell detection (governed by
+      §4 below); body cells (COR / LOE / recommendation text) are case-sensitive.
+
+# -----------------------------------------------------------------------------
+# 4. VALIDATION RULES (machine-checkable)
+# -----------------------------------------------------------------------------
+
+validation:
+
+  # ---------------------------------------------------------------------------
+  # 4.1 Membership rule for COR cells
+  # ---------------------------------------------------------------------------
+  cor_membership:
+    description: >
+      A COR cell is valid iff, after applying §2 canonicalization in order,
+      the resulting string is a member of `AccAhaCOR.enum` exactly (case-sensitive,
+      whitespace-collapsed, NFC-normalized).
+    procedure:
+      - "Apply CR-01 through CR-06 in order."
+      - "Test exact membership against AccAhaCOR.enum."
+      - "On membership: emit the canonical value verbatim."
+      - "On non-membership: open a FlaggedItem with kind=enum-violation, severity=blocking, and route to the reconciliation queue. Never auto-correct."
+    on_violation:
+      flagged_kind: enum-violation
+      flagged_severity: blocking
+      decision_required:
+        - "accept-as-typo (record original + canonical separately, requires two-person rule and panel-chair signoff)"
+        - "correct-and-record (only when the source PDF itself is in error and an erratum has been issued; requires erratum link)"
+        - "defer-to-SME-panel"
+
+  # ---------------------------------------------------------------------------
+  # 4.2 Membership rule for LOE cells
+  # ---------------------------------------------------------------------------
+  loe_membership:
+    description: >
+      Identical strictness to COR membership; tested against AccAhaLOE.enum.
+    procedure:
+      - "Apply CR-01 through CR-06 in order."
+      - "Test exact membership against AccAhaLOE.enum."
+      - "On membership: emit the canonical value verbatim."
+      - "On non-membership: open a FlaggedItem with kind=enum-violation, severity=blocking, and route to the reconciliation queue. Never auto-correct."
+    on_violation:
+      flagged_kind: enum-violation
+      flagged_severity: blocking
+      decision_required:
+        - "accept-as-typo (record original + canonical separately, requires two-person rule and panel-chair signoff)"
+        - "correct-and-record (only when the source PDF itself is in error and an erratum has been issued; requires erratum link)"
+        - "defer-to-SME-panel"
+
+  # ---------------------------------------------------------------------------
+  # 4.3 Header-cell detection (case-insensitive only here)
+  # ---------------------------------------------------------------------------
+  header_detection:
+    description: >
+      A table row is a candidate ACC/AHA recommendation-box header iff, after
+      applying §2 canonicalization to each cell and casefolding ONLY for this
+      header-detection step, the row contains at least one
+      casefolded-equal-to "cor" or "class of recommendation" cell, at least
+      one "loe" or "level of evidence" cell, and at least one "recommendations"
+      or "recommendation" cell.
+    procedure:
+      - "Apply CR-01 through CR-06 to each cell."
+      - "Casefold a separate working copy of each cell text (do not mutate the persisted value)."
+      - "Test casefold-equal membership against the casefolded set of RecBoxHeaderLabel.enum."
+      - "If matched, mark the table region's schema_detected as 'acc-aha-recommendation-box' (subject to §4.4 below)."
+    case_handling:
+      headers: case-insensitive
+      body_cells: case-sensitive
+
+  # ---------------------------------------------------------------------------
+  # 4.4 Recommendation-box schema confirmation
+  # ---------------------------------------------------------------------------
+  schema_confirmation:
+    description: >
+      Confirmation requires ALL of the following, in addition to §4.3:
+        - at least one body row exists with non-empty COR, LOE, and recommendation cells (after consensus);
+        - every body row's COR cell passes §4.1 membership;
+        - every body row's LOE cell passes §4.2 membership;
+        - the recommendation cell is non-empty after canonicalization.
+    on_partial_match:
+      schema_detected: acc-aha-recommendation-box-candidate
+      flagged_kind: schema-partial-match
+      flagged_severity: blocking
+      note: >
+        Recommendation rows MUST NOT be emitted from
+        `acc-aha-recommendation-box-candidate` tables. The candidate is held
+        in the queue until the SME panel confirms or rejects.
+
+# -----------------------------------------------------------------------------
+# 5. CATALOGUED ENUM-VIOLATION PATTERNS
+# -----------------------------------------------------------------------------
+# These are the most common observed deviations from the canonical enum. Each
+# pattern is enumerated explicitly so that the reconciliation queue can route
+# the deviation to a domain-correct reviewer with the right rationale, rather
+# than silently coercing. NONE of these patterns are auto-corrected; every
+# match opens a FlaggedItem and waits for a two-person resolution.
+#
+# Note: the regex patterns are PCRE-compatible and operate AFTER §2
+# canonicalization. They are descriptive heuristics for routing, not
+# substitution rules.
+# -----------------------------------------------------------------------------
+
+violation_catalog:
+
+  # ---------------------------------------------------------------------------
+  # 5.1 COR violation patterns
+  # ---------------------------------------------------------------------------
+  cor:
+
+    - id: COR-VIO-01
+      label: "Casefold mismatch"
+      pattern_regex: "^(?:i|iia|iib|iii: ?no benefit|iii: ?harm)$"
+      example: "iia"
+      counter_canonical_value: "IIa"
+      reviewer_routing: hypertension-specialist
+      severity: blocking
+      note: >
+        Common casefold (e.g., title-case to lowercase) caused by OCR or by
+        heuristic post-processing in a non-pinned tool. Confirm the source
+        glyph stream and reject if the source is in canonical case.
+
+    - id: COR-VIO-02
+      label: "Numeric variant"
+      pattern_regex: "^(?:1|2a|2b|3:? ?no benefit|3:? ?harm)$"
+      example: "2a"
+      counter_canonical_value: "IIa"
+      reviewer_routing: hypertension-specialist
+      severity: blocking
+      note: >
+        Roman numeral mis-rendering. Frequently caused by font subsetting
+        without ToUnicode CMaps. Inspect the cid-glyph orphan trail in SAIR.
+
+    - id: COR-VIO-03
+      label: "Trailing punctuation in COR cell"
+      pattern_regex: "^(?:I|IIa|IIb|III: No Benefit|III: Harm)[\\.,;:]+$"
+      example: "IIa."
+      counter_canonical_value: "IIa"
+      reviewer_routing: hypertension-specialist
+      severity: blocking
+      note: >
+        Stray trailing punctuation that is NOT a footnote marker. Reject and
+        confirm bbox does not bleed into a sibling cell.
+
+    - id: COR-VIO-04
+      label: "Footnote marker glyph in COR cell"
+      pattern_regex: "^(?:I|IIa|IIb|III: No Benefit|III: Harm)[\\*†‡§¶0-9]+$"
+      example: "I*"
+      counter_canonical_value: "I"
+      reviewer_routing: hypertension-specialist
+      severity: blocking
+      note: >
+        Footnote marker present in the COR cell. Resolve via the SAIR
+        footnote-attachment rule (Parse Spec §2.2.5), then strip the marker
+        from the canonical COR value if and only if the parser has correctly
+        attached it as a `footnote_ref` on the cell. Do NOT strip silently.
+
+    - id: COR-VIO-05
+      label: "'Class' prefix retained in COR cell"
+      pattern_regex: "^Class (?:I|IIa|IIb|III: No Benefit|III: Harm)$"
+      example: "Class IIa"
+      counter_canonical_value: "IIa"
+      reviewer_routing: hypertension-specialist
+      severity: blocking
+      note: >
+        The 'Class' prefix is part of the header label, not of the body cell
+        value. If the body cell carries 'Class', the table layout has likely
+        merged a header sub-column into the body. Inspect cell_bboxes.
+
+    - id: COR-VIO-06
+      label: "Class III without qualifier"
+      pattern_regex: "^III$"
+      example: "III"
+      counter_canonical_value: null
+      reviewer_routing: hypertension-specialist
+      severity: blocking
+      note: >
+        ACC/AHA does not use "Class III" without a qualifier. Either the
+        qualifier (`No Benefit` / `Harm`) was lost in extraction (font issue,
+        cell split) or the source is in error. Open `enum-violation` and
+        require source-side confirmation.
+
+    - id: COR-VIO-07
+      label: "Hyphen instead of colon in Class III"
+      pattern_regex: "^III ?- ?(?:No Benefit|Harm)$"
+      example: "III - Harm"
+      counter_canonical_value: "III: Harm"
+      reviewer_routing: hypertension-specialist
+      severity: blocking
+      note: >
+        Common artifact of dash-vs-colon font glyph confusion. Confirm in the
+        glyph stream (CR-06 was applied; if a dash remains, the source uses
+        a dash literally, which is NOT canonical).
+
+    - id: COR-VIO-08
+      label: "Whitespace inside Class III qualifier"
+      pattern_regex: "^III: ?(?:No  ?Benefit|Harm)$"
+      example: "III:  No Benefit"
+      counter_canonical_value: "III: No Benefit"
+      reviewer_routing: hypertension-specialist
+      severity: blocking
+      note: >
+        Internal whitespace not collapsed by CR-03. Confirm canonicalization
+        ran in order; if so, the source itself is in error.
+
+  # ---------------------------------------------------------------------------
+  # 5.2 LOE violation patterns
+  # ---------------------------------------------------------------------------
+  loe:
+
+    - id: LOE-VIO-01
+      label: "Casefold mismatch"
+      pattern_regex: "^(?:a|b-r|b-nr|c-ld|c-eo)$"
+      example: "b-r"
+      counter_canonical_value: "B-R"
+      reviewer_routing: hypertension-specialist
+      severity: blocking
+      note: Common casefold; same handling as COR-VIO-01.
+
+    - id: LOE-VIO-02
+      label: "B without modifier"
+      pattern_regex: "^B$"
+      example: "B"
+      counter_canonical_value: null
+      reviewer_routing: hypertension-specialist
+      severity: blocking
+      note: >
+        ACC/AHA 2015-update grading does not use bare "B". Either the modifier
+        (`-R` for randomized or `-NR` for non-randomized) was lost, or the
+        source is in error. Open `enum-violation`.
+
+    - id: LOE-VIO-03
+      label: "C without modifier"
+      pattern_regex: "^C$"
+      example: "C"
+      counter_canonical_value: null
+      reviewer_routing: hypertension-specialist
+      severity: blocking
+      note: >
+        ACC/AHA 2015-update grading does not use bare "C". Either the modifier
+        (`-LD` for limited data or `-EO` for expert opinion) was lost, or the
+        source is in error. Open `enum-violation`.
+
+    - id: LOE-VIO-04
+      label: "Whitespace around hyphen"
+      pattern_regex: "^(?:B|C) ?- ?(?:R|NR|LD|EO)$"
+      example: "B - R"
+      counter_canonical_value: "B-R"
+      reviewer_routing: hypertension-specialist
+      severity: blocking
+      note: Internal whitespace around the hyphen; same handling as COR-VIO-08.
+
+    - id: LOE-VIO-05
+      label: "Lowercase modifier"
+      pattern_regex: "^(?:B|C)-(?:r|nr|ld|eo)$"
+      example: "B-r"
+      counter_canonical_value: "B-R"
+      reviewer_routing: hypertension-specialist
+      severity: blocking
+      note: Casefold in the modifier. Same handling as COR-VIO-01.
+
+    - id: LOE-VIO-06
+      label: "Footnote marker glyph in LOE cell"
+      pattern_regex: "^(?:A|B-R|B-NR|C-LD|C-EO)[\\*†‡§¶0-9]+$"
+      example: "A†"
+      counter_canonical_value: "A"
+      reviewer_routing: hypertension-specialist
+      severity: blocking
+      note: Same handling as COR-VIO-04.
+
+    - id: LOE-VIO-07
+      label: "'Level' prefix retained in LOE cell"
+      pattern_regex: "^Level (?:A|B-R|B-NR|C-LD|C-EO)$"
+      example: "Level B-R"
+      counter_canonical_value: "B-R"
+      reviewer_routing: hypertension-specialist
+      severity: blocking
+      note: Same handling as COR-VIO-05.
+
+    - id: LOE-VIO-08
+      label: "Pre-2015 LOE letters"
+      pattern_regex: "^(?:A|B|C)$"
+      example: "B"
+      counter_canonical_value: null
+      reviewer_routing: panel-chair
+      severity: blocking
+      note: >
+        Pre-2015 ACC/AHA used bare A/B/C without the post-2015 modifiers.
+        Encountering bare letters in the 2025 HBP Guideline indicates either
+        a citation to a pre-2015 work whose grading was retained verbatim, or
+        a source error. Defer to the panel chair; do NOT remap.
+
+  # ---------------------------------------------------------------------------
+  # 5.3 Cross-cell anomalies (caught at the row level, not the cell level)
+  # ---------------------------------------------------------------------------
+  cross_cell:
+
+    - id: CROSS-VIO-01
+      label: "COR present, LOE absent"
+      condition: "row.cor != null AND row.loe == null"
+      reviewer_routing: hypertension-specialist
+      severity: blocking
+      note: >
+        Likely a cell-bbox mis-association in the parser. Inspect the row's
+        cell_bboxes and the per-engine value_variants to determine whether
+        the LOE cell was misread as empty or merged into another column.
+
+    - id: CROSS-VIO-02
+      label: "LOE present, COR absent"
+      condition: "row.cor == null AND row.loe != null"
+      reviewer_routing: hypertension-specialist
+      severity: blocking
+      note: Mirror of CROSS-VIO-01; same handling.
+
+    - id: CROSS-VIO-03
+      label: "Recommendation cell empty in confirmed recommendation box"
+      condition: "row.recommendation_text_verbatim is empty after canonicalization"
+      reviewer_routing: hypertension-specialist
+      severity: blocking
+      note: >
+        A confirmed recommendation box must have non-empty recommendation
+        text. Inspect cell merge geometry; an empty cell often indicates a
+        cross-row merge that the engines have flattened.
+
+    - id: CROSS-VIO-04
+      label: "Multiple COR or LOE values in a single cell"
+      condition: "row.cor matches more than one canonical AccAhaCOR value OR row.loe matches more than one canonical AccAhaLOE value"
+      reviewer_routing: hypertension-specialist
+      severity: blocking
+      note: >
+        Two grading values in one cell suggest the row is actually two
+        atomic recommendations folded by layout. Defer atomicity decomposition
+        to extract-recommendation-cor-loe; do NOT split here.
+
+# -----------------------------------------------------------------------------
+# 6. CROSS-FIELD INVARIANTS (validators MUST enforce)
+# -----------------------------------------------------------------------------
+
+invariants:
+
+  - id: GRADING-INV-01
+    description: >
+      Every consumer schema and skill MUST resolve `AccAhaCOR` and `AccAhaLOE`
+      via $ref to this file. Inlined enum copies are forbidden; CI MUST detect
+      and fail builds containing inlined copies of these enums.
+
+  - id: GRADING-INV-02
+    description: >
+      Canonicalization (§2) MUST be applied in the documented order. Skipping
+      or reordering rules is a release blocker.
+
+  - id: GRADING-INV-03
+    description: >
+      Auto-correction is forbidden. No code path may rewrite a non-canonical
+      value to a canonical value without a corresponding two-person-resolved
+      FlaggedItem. CI MUST scan for "coerce", "auto-fix", "normalize-to-canon"
+      patterns in producing skills and fail on hits without an accompanying
+      `FlaggedItem.resolution` record.
+
+  - id: GRADING-INV-04
+    description: >
+      Header-detection casefold (§4.3) MUST NOT propagate to body-cell
+      validation. The casefold is performed on a working copy only.
+
+  - id: GRADING-INV-05
+    description: >
+      `pin.framework_version_label` MUST match the declared version in the
+      source PDF's grading-definitions section. Mismatch is a release blocker
+      and triggers a `version-drift` event in the build.
+
+  - id: GRADING-INV-06
+    description: >
+      No member of `violation_catalog` may have its `counter_canonical_value`
+      automatically applied. The field is a routing hint for the SME reviewer,
+      not a substitution rule.
+
+  - id: GRADING-INV-07
+    description: >
+      `RecBoxHeaderLabel` is the only enum in this file that is consulted
+      with case-insensitive matching, and only by the `parse-acc-aha-recbox`
+      skill at the schema-detection step. All other enums are case-sensitive.
+
+  - id: GRADING-INV-08
+    description: >
+      Any recommendation-box body row whose COR or LOE fails membership MUST
+      result in the row being held (not emitted) and a FlaggedItem opened
+      with severity=blocking. The row never advances to Phase 3 without a
+      two-person-resolved queue entry referencing it.
+
+  - id: GRADING-INV-09
+    description: >
+      Auto-correction via "accept-as-typo" requires panel-chair signoff in
+      addition to the two-person rule, and MUST record the original verbatim
+      value, the canonical value, the rationale, and an erratum link if one
+      exists. The original verbatim value is preserved immutably alongside
+      the canonical value; the canonical value is never substituted in the
+      SAIR's source-anchored fields.
+
+  - id: GRADING-INV-10
+    description: >
+      A future ACC/AHA grading update (e.g., a 2026+ revision adding new
+      classes or evidence levels) MUST NOT mutate this file in place. A new
+      schema file (e.g., `schemas/acc-aha-grading-2027.yaml`) MUST be created
+      with its own `pin` block, and ADR-HTN-001 (or its successor ADR) MUST
+      be amended to specify which file applies to which guideline corpus.
+
+# =============================================================================
+# 7. WORKED EXAMPLES (shape-correctness fixtures)
+# -----------------------------------------------------------------------------
+# Two examples are provided:
+#   7.1 A canonical, in-enum value pair (COR + LOE) — passes membership.
+#   7.2 A non-canonical pair with a documented violation — opens FlaggedItem.
+#
+# Note: the canonical examples below are STRUCTURE fixtures, not assertions
+# about which specific COR/LOE values appear at any specific position in the
+# 2025 HBP Guideline. Per the framework's standing rule, COR/LOE values bound
+# to a specific recommendation MUST always be drawn from the source PDF and
+# MUST NOT be invented in any fixture.
+# =============================================================================
+
+examples:
+
+  # ---------------------------------------------------------------------------
+  # 7.1 Canonical pair — passes both membership rules
+  # ---------------------------------------------------------------------------
+  - case: "Canonical, in-enum"
+    raw_cor_cell: " IIa "
+    raw_loe_cell: " B-R "
+    canonicalized_cor: "IIa"
+    canonicalized_loe: "B-R"
+    membership:
+      cor: PASS
+      loe: PASS
+    flagged_items: []
+    note: >
+      After CR-01 through CR-06, the trimmed values map directly to canonical
+      enum members. No FlaggedItem is opened.
+
+  # ---------------------------------------------------------------------------
+  # 7.2 Non-canonical pair — opens FlaggedItems with reviewer routing
+  # ---------------------------------------------------------------------------
+  - case: "Casefold mismatch on COR; trailing dot on LOE"
+    raw_cor_cell: "iia"
+    raw_loe_cell: "B-R."
+    canonicalized_cor: "iia"
+    canonicalized_loe: "B-R."
+    membership:
+      cor: FAIL
+      loe: FAIL
+    flagged_items:
+      - kind: enum-violation
+        severity: blocking
+        cell: cor
+        matched_pattern_id: COR-VIO-01
+        decision_required:
+          - accept-as-typo
+          - correct-and-record
+          - defer-to-SME-panel
+        reviewer_routing: hypertension-specialist
+        note: >
+          The canonical lookup failed; the casefolded "iia" matches the
+          casefold of "IIa" but case-sensitive membership rejects. Open
+          FlaggedItem; do NOT auto-correct.
+      - kind: enum-violation
+        severity: blocking
+        cell: loe
+        matched_pattern_id: LOE-VIO-???           # this label maps to "trailing punctuation" if such a rule is added; otherwise routes generically
+        decision_required:
+          - accept-as-typo
+          - correct-and-record
+          - defer-to-SME-panel
+        reviewer_routing: hypertension-specialist
+        note: >
+          Trailing dot on the LOE cell. Inspect cell bbox to verify that the
+          dot is actually within the cell and not a footnote marker straddling
+          a row boundary. Open FlaggedItem; do NOT auto-correct.
+
+# =============================================================================
+# 8. CHANGE CONTROL
+# -----------------------------------------------------------------------------
+# Any change to this schema (closed enums, validation rules, canonicalization
+# rules, violation catalog, or invariants) requires:
+#   - A change-controlled diff with regression evaluation against the golden set.
+#   - Panel-chair signoff.
+#   - Increment of `schema_version` (semver: breaking = major).
+#   - Update of `last_reviewed`.
+#   - Coordinated update of every producing/consuming skill's `tools_lock`
+#     reference and acceptance test fixtures.
+#
+# A NEW grading framework version (e.g., a future ACC/AHA revision) MUST NOT
+# mutate this file in place — see GRADING-INV-10.
+# =============================================================================
+
+change_control:
+  semver: true
+  golden_set_regression_required: true
+  panel_chair_signoff_required: true
+  parent_schemas_to_update_on_breaking_change:
+    - cpg-htn-2025-acc-aha/schemas/sair.yaml
+    - cpg-htn-2025-acc-aha/schemas/recommendation-record-htn.yaml
+  parent_skills_to_update_on_breaking_change:
+    - cpg-htn-2025-acc-aha/skills/parse-acc-aha-recbox
+    - cpg-htn-2025-acc-aha/skills/extract-recommendation-cor-loe
+    - cpg-htn-2025-acc-aha/skills/predecessor-map-2017
+    - cpg-htn-2025-acc-aha/skills/safety-hbp
