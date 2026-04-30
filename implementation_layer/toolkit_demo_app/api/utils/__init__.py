@@ -8,7 +8,6 @@ from .config import (
     validate_file_size,
     validate_vision_page_limit,
 )
-from .s3 import create_s3_client, ensure_object_exists, generate_presigned_url
 from .schema import (
     load_schema,
     save_schema,
@@ -22,9 +21,6 @@ __all__ = [
     "MAX_FILE_SIZE_BYTES",
     "MAX_FILE_SIZE_MB",
     "MAX_VISION_PAGES",
-    "create_s3_client",
-    "ensure_object_exists",
-    "generate_presigned_url",
     "get_api_config",
     "load_schema",
     "save_schema",

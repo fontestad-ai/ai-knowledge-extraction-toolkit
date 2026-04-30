@@ -1,24 +1,16 @@
-"""
-GAIK Toolkit Demo API
+"""Standalone clinical knowledge extraction API."""
 
-FastAPI backend that provides REST endpoints for the GAIK toolkit components.
-"""
-
-import asyncio
 import logging
-from contextlib import asynccontextmanager
 from pathlib import Path
 
 from dotenv import load_dotenv
 
-# Configure logging
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
 )
 logger = logging.getLogger(__name__)
 
-# Load .env.local from toolkit_demo_app folder - must be before other imports
 env_path = Path(__file__).parent.parent / ".env.local"
 load_dotenv(env_path, override=True)
 
@@ -26,60 +18,21 @@ from fastapi import FastAPI, Request  # noqa: E402, I001
 from fastapi.middleware.cors import CORSMiddleware  # noqa: E402
 from fastapi.responses import JSONResponse  # noqa: E402
 
-from gaik import __version__ as gaik_version  # noqa: E402
+from gaik import __version__ as gaik_version  # noqa: E402, F401
 
 try:
-    # Docker: routers/ is in same directory as main.py
-    from routers import (
-        classifier,
-        dental_transcription,
-        diary,
-        extractor,
-        luvata_order,
-        parser,
-        pipeline,
-        rag,
-        text_to_speech,
-        transcriber,
-        video_search,
-    )
+    from routers import clinical
 except ImportError:
-    # Local dev: running from project root with api.main:app
-    from api.routers import (
-        classifier,
-        dental_transcription,
-        diary,
-        extractor,
-        luvata_order,
-        parser,
-        pipeline,
-        rag,
-        text_to_speech,
-        transcriber,
-        video_search,
-    )
-
-
-@asynccontextmanager
-async def lifespan(app: FastAPI):
-    # Startup
-    logger.info("GAIK Demo API starting...")
-    cleanup_task = asyncio.create_task(dental_transcription._cleanup_old_subtitles())
-    yield
-    # Shutdown
-    cleanup_task.cancel()
-    logger.info("GAIK Demo API shutting down...")
+    from api.routers import clinical
 
 
 app = FastAPI(
-    title="GAIK Toolkit Demo API",
-    description="REST API for GAIK toolkit components",
+    title="Clinical Knowledge Extraction API",
+    description="REST API for the standalone clinical guideline extraction workflow",
     version=gaik_version,
-    lifespan=lifespan,
     redirect_slashes=False,
 )
 
-# CORS for Next.js frontend (allowing all origins for cluster-internal usage)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -92,55 +45,25 @@ app.add_middleware(
 @app.exception_handler(Exception)
 async def global_exception_handler(request: Request, exc: Exception):
     """Global exception handler for unhandled errors."""
-    logger.error(f"Unhandled error: {exc}", exc_info=True)
-    return JSONResponse(
-        status_code=500,
-        content={"detail": "Internal server error"},
-    )
+    logger.error("Unhandled error: %s", exc, exc_info=True)
+    return JSONResponse(status_code=500, content={"detail": "Internal server error"})
 
-
-# Include routers
-app.include_router(parser.router, prefix="/parse", tags=["Parser"])
-app.include_router(classifier.router, prefix="/classify", tags=["Classifier"])
-app.include_router(extractor.router, prefix="/extract", tags=["Extractor"])
-app.include_router(transcriber.router, prefix="/transcribe", tags=["Transcriber"])
-app.include_router(text_to_speech.router, prefix="/text-to-speech", tags=["Text-to-Speech"])
-app.include_router(pipeline.router, prefix="/pipeline", tags=["Pipeline"])
-app.include_router(rag.router, prefix="/rag", tags=["RAG"])
-app.include_router(diary.router, prefix="/diary", tags=["Diary"])
-app.include_router(
-    dental_transcription.router,
-    prefix="/dental-transcribe",
-    tags=["Video Transcription"],
-)
-app.include_router(video_search.router, prefix="/video-search", tags=["Video Search"])
-app.include_router(luvata_order.router, tags=["Luvata Order"])
+app.include_router(clinical.router, prefix="/clinical", tags=["Clinical Extraction"])
 
 
 @app.get("/health")
 async def health_check():
-    """Health check endpoint"""
-    return {"status": "ok", "service": "gaik-demo-api"}
+    return {"status": "ok", "service": "clinical-knowledge-extraction-api"}
 
 
 @app.get("/")
 async def root():
-    """Root endpoint with API info"""
     return {
-        "name": "GAIK Toolkit Demo API",
+        "name": "Clinical Knowledge Extraction API",
         "version": gaik_version,
         "docs": "/docs",
         "endpoints": {
-            "parse": "/parse - Document parsing (PDF, DOCX)",
-            "classify": "/classify - Document classification",
-            "extract": "/extract - Data extraction",
-            "transcribe": "/transcribe - Audio/video transcription",
-            "text-to-speech": "/text-to-speech - Text-to-speech audio generation",
-            "pipeline": "/pipeline - End-to-end pipelines (audio/document to structured data)",
-            "rag": "/rag - RAG pipeline (document indexing and Q&A with citations)",
-            "diary": "/diary - Construction diary (Työmaapäiväkirja) workflow",
-            "dental-transcribe": "/dental-transcribe - Dental transcription with SRT/VTT subtitles",
-            "video-search": "/video-search - Semantic dental video search (pgvector)",
-            "luvata-order": "/luvata-order - Luvata ABB order processing with BOM matching",
+            "clinical": "/clinical/extract - Extract traceable clinical knowledge from uploaded guideline files",
+            "examples": "/clinical/examples - List bundled guideline example assets",
         },
     }

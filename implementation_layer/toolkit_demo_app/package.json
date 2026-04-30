@@ -3,14 +3,13 @@
   "version": "0.1.0",
   "private": false,
   "scripts": {
-    "dev": "bun --bun next dev",
+    "dev": "next dev",
     "dev:api": "uv run uvicorn api.main:app --reload --port 8000",
-    "dev:all": "concurrently --names \"next,api\" -c \"cyan,magenta\" \"bun dev\" \"uv run uvicorn api.main:app --reload --port 8000\"",
-    "build": "bun --bun next build",
-    "start": "bun --bun next start",
+    "dev:all": "concurrently --names \"next,api\" -c \"cyan,magenta\" \"next dev\" \"uv run uvicorn api.main:app --reload --port 8000\"",
+    "build": "next build",
+    "start": "next start",
     "lint": "eslint",
-    "format": "prettier --write .",
-    "db:tunnel": "oc port-forward svc/pgvector-demo 5432:5432 -n gaik"
+    "format": "prettier --write ."
   },
   "dependencies": {
     "@hookform/resolvers": "^5.2.2",
@@ -45,10 +44,6 @@
     "@streamdown/code": "^1.1.1",
     "@streamdown/math": "^1.0.2",
     "@streamdown/mermaid": "^1.0.2",
-    "@supabase/ssr": "^0.10.2",
-    "@supabase/supabase-js": "^2.105.1",
-    "@upstash/ratelimit": "^2.0.8",
-    "@upstash/redis": "^1.37.0",
     "ai": "^6.0.169",
     "ansi-to-react": "^6.2.6",
     "babel-plugin-react-compiler": "^1.0.0",
@@ -65,7 +60,6 @@
     "nanoid": "^5.1.9",
     "next": "^16.2.4",
     "next-themes": "^0.4.6",
-    "posthog-js": "^1.372.5",
     "prettier": "^3.8.3",
     "react": "19.2.5",
     "react-day-picker": "^9.14.0",

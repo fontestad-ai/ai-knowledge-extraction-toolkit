@@ -1,29 +1,42 @@
-import { Ratelimit } from "@upstash/ratelimit";
-import { Redis } from "@upstash/redis";
+const RATE_LIMIT = 15;
+const WINDOW_MS = 60_000;
 
-/**
- * Rate limiter using Upstash Redis
- * Fixed window: 15 POST requests per minute per IP (see proxy.ts)
- * Falls back to no rate limiting if Redis is not configured (dev environment)
- */
-function createRateLimiter(): Ratelimit | null {
-  const url = process.env.UPSTASH_REDIS_REST_URL;
-  const token = process.env.UPSTASH_REDIS_REST_TOKEN;
-
-  if (!url || !token) {
-    console.warn(
-      "[rate-limit] UPSTASH_REDIS_REST_URL or UPSTASH_REDIS_REST_TOKEN not set. Rate limiting disabled.",
-    );
-    return null;
-  }
-
-  return new Ratelimit({
-    redis: new Redis({ url, token }),
-    // 15 POST req/min per IP (see proxy.ts)
-    limiter: Ratelimit.fixedWindow(15, "1 m"),
-    analytics: false,
-    prefix: "gaik-demo",
-  });
+interface RateLimitResult {
+  success: boolean;
+  limit: number;
+  remaining: number;
+  reset: number;
 }
 
-export const ratelimit = createRateLimiter();
+class LocalRateLimiter {
+  private readonly buckets = new Map<string, number[]>();
+
+  async limit(key: string): Promise<RateLimitResult> {
+    const now = Date.now();
+    const windowStart = now - WINDOW_MS;
+    const existing = this.buckets.get(key) ?? [];
+    const recent = existing.filter((timestamp) => timestamp > windowStart);
+
+    if (recent.length >= RATE_LIMIT) {
+      const reset = recent[0] + WINDOW_MS;
+      this.buckets.set(key, recent);
+      return {
+        success: false,
+        limit: RATE_LIMIT,
+        remaining: 0,
+        reset,
+      };
+    }
+
+    recent.push(now);
+    this.buckets.set(key, recent);
+    return {
+      success: true,
+      limit: RATE_LIMIT,
+      remaining: RATE_LIMIT - recent.length,
+      reset: now + WINDOW_MS,
+    };
+  }
+}
+
+export const ratelimit = new LocalRateLimiter();

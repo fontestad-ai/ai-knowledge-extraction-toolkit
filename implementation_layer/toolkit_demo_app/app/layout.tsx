@@ -1,8 +1,6 @@
-import { PostHogProvider } from "@/components/providers/posthog-provider";
 import { Toaster } from "@/components/ui/toaster";
 import type { Metadata } from "next";
 import { Fraunces, JetBrains_Mono, Sora } from "next/font/google";
-import Script from "next/script";
 import "./globals.css";
 
 const sora = Sora({
@@ -22,34 +20,34 @@ const jetBrainsMono = JetBrains_Mono({
 
 export const metadata: Metadata = {
   title: {
-    default: "GAIK Toolkit Demo",
-    template: "%s | GAIK Toolkit",
+    default: "Clinical Knowledge Extraction",
+    template: "%s | Clinical Knowledge Extraction",
   },
   description:
-    "Interactive demos for GAIK Toolkit - Extract, parse, classify, and transcribe documents with AI",
+    "Standalone clinical guideline extraction UI for source-grounded structured knowledge generation.",
   metadataBase: new URL("https://gaik-demo.2.rahtiapp.fi"),
   openGraph: {
     type: "website",
     locale: "en_US",
     url: "https://gaik-demo.2.rahtiapp.fi",
-    siteName: "GAIK Toolkit Demo",
-    title: "GAIK Toolkit Demo",
+    siteName: "Clinical Knowledge Extraction",
+    title: "Clinical Knowledge Extraction",
     description:
-      "Interactive demos for GAIK Toolkit - Extract, parse, classify, and transcribe documents with AI",
+      "Standalone clinical guideline extraction UI for source-grounded structured knowledge generation.",
     images: [
       {
         url: "/logos/gaik_logo_medium.png",
         width: 512,
         height: 512,
-        alt: "GAIK Toolkit Demo",
+        alt: "Clinical Knowledge Extraction",
       },
     ],
   },
   twitter: {
     card: "summary_large_image",
-    title: "GAIK Toolkit Demo",
+    title: "Clinical Knowledge Extraction",
     description:
-      "Interactive demos for GAIK Toolkit - Extract, parse, classify, and transcribe documents with AI",
+      "Standalone clinical guideline extraction UI for source-grounded structured knowledge generation.",
     images: ["/logos/gaik_logo_medium.png"],
   },
   icons: {
@@ -67,16 +65,8 @@ export default function RootLayout({
       <body
         className={`${sora.variable} ${fraunces.variable} ${jetBrainsMono.variable} antialiased`}
       >
-        <PostHogProvider>
-          {children}
-          <Toaster />
-        </PostHogProvider>
-        {process.env.NEXT_PUBLIC_CHAT_URL && (
-          <Script
-            src={`${process.env.NEXT_PUBLIC_CHAT_URL}/widget.js`}
-            strategy="lazyOnload"
-          />
-        )}
+        {children}
+        <Toaster />
       </body>
     </html>
   );

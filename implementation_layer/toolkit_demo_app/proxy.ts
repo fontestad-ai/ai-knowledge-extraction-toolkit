@@ -1,5 +1,4 @@
 import { ratelimit } from "@/lib/rate-limit";
-import { updateSession } from "@/lib/supabase/proxy";
 import { NextRequest, NextResponse } from "next/server";
 
 const BACKEND_URL = process.env.BACKEND_URL || "http://localhost:8000";
@@ -15,11 +14,7 @@ function hasBody(method: string): boolean {
 export default async function proxy(request: NextRequest) {
   const { pathname } = request.nextUrl;
 
-  // Proxy API requests to backend (except Next.js API routes)
-  const isNextApiRoute =
-    pathname.startsWith("/api/auth") || pathname.startsWith("/api/admin");
-  if (pathname.startsWith("/api") && !isNextApiRoute) {
-    // Rate limit only POST requests (heavy processing endpoints)
+  if (pathname.startsWith("/api")) {
     if (ratelimit && request.method === "POST") {
       try {
         const ip =
@@ -31,7 +26,7 @@ export default async function proxy(request: NextRequest) {
 
         if (!success) {
           return NextResponse.json(
-            { error: "Liian monta pyyntöä. Yritä hetken päästä uudelleen." },
+            { error: "Too many requests. Please try again shortly." },
             {
               status: 429,
               headers: {
@@ -58,8 +53,6 @@ export default async function proxy(request: NextRequest) {
     if (contentType) headers.set("content-type", contentType);
 
     try {
-      // Buffer the full body to preserve binary integrity for large
-      // multipart uploads. Streaming truncates data in Bun/standalone.
       let body: ArrayBuffer | null = null;
       if (hasBody(request.method)) {
         body = await request.arrayBuffer();
@@ -72,7 +65,6 @@ export default async function proxy(request: NextRequest) {
         body,
       });
 
-      // For SSE streaming responses, pass through directly
       if (response.headers.get("content-type")?.includes("text/event-stream")) {
         return new Response(response.body, {
           status: response.status,
@@ -96,8 +88,7 @@ export default async function proxy(request: NextRequest) {
     }
   }
 
-  // Handle Supabase session for all non-API routes
-  const response = await updateSession(request);
+  const response = NextResponse.next({ request });
   response.headers.set("x-current-path", pathname);
   return response;
 }

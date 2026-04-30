@@ -1,20 +1,5 @@
-import { getUserAccessStatus } from "@/lib/queries/access";
-import dynamic from "next/dynamic";
-import { Hero } from "./components/hero";
-import { InstallSnippet } from "./components/install-snippet";
+import { ClinicalWorkbench } from "./components/clinical-workbench";
 
-const DemoCards = dynamic(() =>
-  import("./components/demo-cards").then((mod) => mod.DemoCards),
-);
-
-export default async function HomePage() {
-  const { isUnlocked } = await getUserAccessStatus();
-
-  return (
-    <div className="space-y-24">
-      <Hero />
-      <DemoCards isUnlocked={isUnlocked} />
-      <InstallSnippet />
-    </div>
-  );
+export default function HomePage() {
+  return <ClinicalWorkbench />;
 }
